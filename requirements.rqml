@@ -2075,6 +2075,58 @@
       <from><locator><local id="REQ-PLUGIN-FACTORY"/></locator></from>
       <to><locator><external uri="test/plugin.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-DISCOVERY" type="implements">
+      <from><locator><external uri="src/adapter/discover.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DISCOVERY"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DORMANT" type="implements">
+      <from><locator><external uri="src/adapter/discover.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DORMANT"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-THIN-ADAPTER" type="implements">
+      <from><locator><external uri="src/adapter/cli.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-THIN-ADAPTER"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CLI-CONTRACT" type="implements">
+      <from><locator><external uri="src/adapter/cli.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CLI-CONTRACT"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-STRICTNESS-RESPECT" type="implements">
+      <from><locator><external uri="src/adapter/strictness.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-STRICTNESS-RESPECT"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-FAIL-OPEN" type="implements">
+      <from><locator><external uri="src/adapter/failopen.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-FAIL-OPEN-2" type="implements">
+      <from><locator><external uri="src/adapter/cli.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></to>
+    </edge>
+    <edge id="E-VER-DISCOVERY" type="verifiedBy">
+      <from><locator><local id="REQ-DISCOVERY"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-DORMANT" type="verifiedBy">
+      <from><locator><local id="REQ-DORMANT"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-THIN-ADAPTER" type="verifiedBy">
+      <from><locator><local id="REQ-THIN-ADAPTER"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CLI-CONTRACT" type="verifiedBy">
+      <from><locator><local id="REQ-CLI-CONTRACT"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-STRICTNESS-RESPECT" type="verifiedBy">
+      <from><locator><local id="REQ-STRICTNESS-RESPECT"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-FAIL-OPEN" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
+      <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
