@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { createWarnOnce, type Shell, type ShellInvocation } from "../src/adapter/index.ts";
-import type { HookContext } from "../src/hooks/context.ts";
+import type { HookContext, PluginClient } from "../src/hooks/context.ts";
 
 export const MINIMAL_SPEC = `<?xml version="1.0" encoding="UTF-8"?>
 <rqml xmlns="https://rqml.org/schema/2.1.0" version="2.1.0" docId="FIX-001" status="draft">
@@ -101,17 +101,37 @@ export function rqmlAvailable(): boolean {
   return !r.error;
 }
 
-/** Build a HookContext for tests, capturing notify() messages. */
-export function makeContext(opts: { $: Shell; directory: string }): {
+/** Build a HookContext for tests, capturing notify() messages, toasts, and prompts. */
+export function makeContext(opts: { $: Shell; directory: string; toastShown?: boolean }): {
   ctx: HookContext;
   notes: string[];
+  toasts: Array<{ message: string; variant?: string }>;
+  prompts: Array<{ path: { id: string }; body: { parts: Array<{ type: string; text: string }> } }>;
 } {
   const notes: string[] = [];
+  const toasts: Array<{ message: string; variant?: string }> = [];
+  const prompts: Array<{ path: { id: string }; body: { parts: Array<{ type: string; text: string }> } }> = [];
+  const toastShown = opts.toastShown ?? true;
+  const client: PluginClient = {
+    tui: {
+      showToast: async (o) => {
+        toasts.push(o.body);
+        return toastShown;
+      },
+    },
+    session: {
+      prompt: async (o) => {
+        prompts.push(o as (typeof prompts)[number]);
+        return {};
+      },
+    },
+  };
   const ctx: HookContext = {
     $: opts.$,
     directory: opts.directory,
+    client,
     warnOnce: createWarnOnce(),
     notify: (message) => notes.push(message),
   };
-  return { ctx, notes };
+  return { ctx, notes, toasts, prompts };
 }

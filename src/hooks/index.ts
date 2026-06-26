@@ -7,14 +7,15 @@
  *   - tool.execute.before  pre-edit approval gate   (Stage 3, ADR-0001) ✓
  *   - tool.execute.after   spec-edit validation      (Stage 3) ✓
  *   - experimental.chat.system.transform / chat.message  session anchor (Stage 4) ✓
- *   - event                advisory idle check        (Stage 5, ADR-0002)
+ *   - event (session.idle) advisory idle check        (Stage 5, ADR-0002) ✓
  *   - config               zero-touch registration    (Stage 8, ADR-0003)
  */
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
 
 import { createWarnOnce, type Shell } from "../adapter/index.ts";
-import type { HookContext } from "./context.ts";
+import type { HookContext, PluginClient } from "./context.ts";
 import { createAnchor } from "./anchor.ts";
+import { createIdleCheck } from "./idle-check.ts";
 import { preEditGate } from "./pre-edit.ts";
 import { specEditValidate } from "./spec-validate.ts";
 
@@ -25,6 +26,7 @@ export function createHooks(input: PluginInput): Hooks {
   const ctx: HookContext = {
     $: input.$ as unknown as Shell,
     directory: input.directory,
+    client: input.client as unknown as PluginClient,
     warnOnce: createWarnOnce(),
     notify: (message) => console.error(`[rqml] ${message}`),
   };
@@ -36,5 +38,6 @@ export function createHooks(input: PluginInput): Hooks {
     "tool.execute.after": specEditValidate(ctx),
     "experimental.chat.system.transform": anchor.systemTransform,
     "chat.message": anchor.chatMessage,
+    event: createIdleCheck(ctx),
   };
 }

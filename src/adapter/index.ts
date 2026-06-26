@@ -16,3 +16,8 @@ export { createWarnOnce } from "./failopen.ts";
 export type { WarnOnce } from "./failopen.ts";
 
 export { guarded } from "./feature-detect.ts";
+
+export { workspaceCheck, workspaceStatus } from "./workspace.ts";
+export type { WorkspaceSummary } from "./workspace.ts";
+
+export { softPromptAllowed } from "./run-mode.ts";

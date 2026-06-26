@@ -20,8 +20,9 @@
  */
 import type { Hooks } from "@opencode-ai/plugin";
 
-import { findSpec, guarded, runRqml } from "../adapter/index.ts";
+import { findSpec, guarded, runRqml, workspaceStatus } from "../adapter/index.ts";
 import { buildAnchor } from "../content/anchor.ts";
+import { buildWorkspaceAnchor } from "../content/workspace.ts";
 import { MISSING_CLI_MESSAGE } from "../content/messages.ts";
 import type { HookContext } from "./context.ts";
 
@@ -46,7 +47,15 @@ export function createAnchor(ctx: HookContext): AnchorHooks {
     if (cache.has(sessionID)) return cache.get(sessionID) ?? null;
 
     const loc = findSpec(ctx.directory);
-    if (!loc) return null; // ungoverned -> dormant (do not cache; cheap to recheck)
+    if (!loc) {
+      // No single governing spec — this may be a workspace root with specs
+      // beneath it (REQ-HOOK-WORKSPACE). Delegate discovery to the CLI; list the
+      // units when there are any, otherwise the project is ungoverned (dormant).
+      const ws = await workspaceStatus(ctx.$, ctx.directory);
+      const anchor = ws.available && ws.unitCount > 0 ? buildWorkspaceAnchor(ws.result.stdout, ws.unitCount) : null;
+      cache.set(sessionID, anchor); // cache either way: probe the workspace at most once per session
+      return anchor;
+    }
 
     const result = await runRqml(ctx.$, ["status"], { cwd: loc.specDir });
     if (!result.available) {

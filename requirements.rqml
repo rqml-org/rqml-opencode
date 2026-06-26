@@ -2191,6 +2191,42 @@
       <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
       <to><locator><external uri="test/anchor.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-TURN-END-CHECK" type="implements">
+      <from><locator><external uri="src/hooks/idle-check.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-TURN-END-CHECK"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-TURN-END-CHECK-2" type="implements">
+      <from><locator><external uri="src/adapter/run-mode.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-TURN-END-CHECK"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-WORKSPACE" type="implements">
+      <from><locator><external uri="src/adapter/workspace.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-WORKSPACE"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-WORKSPACE-2" type="implements">
+      <from><locator><external uri="src/content/workspace.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-WORKSPACE"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-WORKSPACE-3" type="implements">
+      <from><locator><external uri="src/hooks/idle-check.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-WORKSPACE"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-WORKSPACE-4" type="implements">
+      <from><locator><external uri="src/hooks/anchor.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-WORKSPACE"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-ENFORCEMENT-HONESTY-2" type="implements">
+      <from><locator><external uri="src/hooks/idle-check.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></to>
+    </edge>
+    <edge id="E-VER-TURN-END-CHECK" type="verifiedBy">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><external uri="test/idle-check.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-WORKSPACE" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-WORKSPACE"/></locator></from>
+      <to><locator><external uri="test/idle-check.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
