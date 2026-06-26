@@ -2127,6 +2127,38 @@
       <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
       <to><locator><external uri="test/adapter.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-HOOK-PREIMPL" type="implements">
+      <from><locator><external uri="src/hooks/pre-edit.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-PREIMPL"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-SPEC-VALIDATE" type="implements">
+      <from><locator><external uri="src/hooks/spec-validate.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-SPEC-VALIDATE"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-DIAGNOSTICS" type="implements">
+      <from><locator><external uri="src/adapter/diagnostics.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-DIAGNOSTICS"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-PREIMPL-COVERAGE-DISCLOSURE" type="implements">
+      <from><locator><external uri="src/content/messages.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-PREIMPL" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><external uri="test/pre-edit.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-PREIMPL-COVERAGE-DISCLOSURE" type="verifiedBy">
+      <from><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></from>
+      <to><locator><external uri="test/pre-edit.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-SPEC-VALIDATE" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-SPEC-VALIDATE"/></locator></from>
+      <to><locator><external uri="test/spec-validate.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-DIAGNOSTICS" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-DIAGNOSTICS"/></locator></from>
+      <to><locator><external uri="test/spec-validate.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
