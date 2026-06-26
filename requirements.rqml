@@ -2047,6 +2047,34 @@
       <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
       <to><locator><doc uri="https://github.com/rqml-org/rqml-codex/blob/main/requirements.rqml" docId="RQML-CODEX-001" id="REQ-TRUST-TRANSPARENCY" title="Honest enforcement status"/></locator></to>
     </edge>
+    <edge id="E-IMPL-MANIFEST" type="implements">
+      <from><locator><external uri="package.json" kind="code"/></locator></from>
+      <to><locator><local id="REQ-MANIFEST"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-MANIFEST-2" type="implements">
+      <from><locator><external uri="src/index.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-MANIFEST"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-PLUGIN-FACTORY" type="implements">
+      <from><locator><external uri="src/index.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-PLUGIN-FACTORY"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-PLUGIN-FACTORY-2" type="implements">
+      <from><locator><external uri="src/hooks/index.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-PLUGIN-FACTORY"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DISTRIBUTION" type="implements">
+      <from><locator><external uri="package.json" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DISTRIBUTION"/></locator></to>
+    </edge>
+    <edge id="E-VER-MANIFEST" type="verifiedBy">
+      <from><locator><local id="REQ-MANIFEST"/></locator></from>
+      <to><locator><external uri="test/plugin.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-PLUGIN-FACTORY" type="verifiedBy">
+      <from><locator><local id="REQ-PLUGIN-FACTORY"/></locator></from>
+      <to><locator><external uri="test/plugin.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
