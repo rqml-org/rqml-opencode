@@ -2291,6 +2291,34 @@
       <from><locator><local id="REQ-PATH-DISCIPLINE"/></locator></from>
       <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-SKILL-AUTHORING" type="implements">
+      <from><locator><external uri="craft/authoring.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-SKILL-AUTHORING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-SKILL-AUTHORING-2" type="implements">
+      <from><locator><external uri="craft/monorepo.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-SKILL-AUTHORING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-SKILL-AUTHORING-3" type="implements">
+      <from><locator><external uri="src/content/craft.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-SKILL-AUTHORING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CRAFT-GUARD" type="implements">
+      <from><locator><external uri="scripts/check-craft-drift.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CRAFT-GUARD"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CRAFT-GUARD-2" type="implements">
+      <from><locator><external uri="src/content/craft.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CRAFT-GUARD"/></locator></to>
+    </edge>
+    <edge id="E-VER-SKILL-AUTHORING" type="verifiedBy">
+      <from><locator><local id="REQ-SKILL-AUTHORING"/></locator></from>
+      <to><locator><external uri="test/craft-sync.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CRAFT-GUARD" type="verifiedBy">
+      <from><locator><local id="REQ-CRAFT-GUARD"/></locator></from>
+      <to><locator><external uri="test/craft-sync.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->

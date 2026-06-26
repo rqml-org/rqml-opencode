@@ -15,7 +15,8 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "check:craft": "node scripts/check-craft-drift.ts"
   },
   "keywords": [
     "rqml",
