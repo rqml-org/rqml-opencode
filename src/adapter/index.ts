@@ -21,3 +21,6 @@ export { workspaceCheck, workspaceStatus } from "./workspace.ts";
 export type { WorkspaceSummary } from "./workspace.ts";
 
 export { softPromptAllowed } from "./run-mode.ts";
+
+export { registerContributions, RQML_MCP } from "./register.ts";
+export type { RegisterableConfig, Registered } from "./register.ts";

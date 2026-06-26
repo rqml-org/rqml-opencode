@@ -8,7 +8,8 @@
  *   - tool.execute.after   spec-edit validation      (Stage 3) ✓
  *   - experimental.chat.system.transform / chat.message  session anchor (Stage 4) ✓
  *   - event (session.idle) advisory idle check        (Stage 5, ADR-0002) ✓
- *   - config               zero-touch registration    (Stage 8, ADR-0003)
+ *   - tool                 command surfaces           (Stage 6, ADR-0004) ✓
+ *   - config               zero-touch registration    (Stage 8, ADR-0003) ✓
  */
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
 
@@ -16,6 +17,7 @@ import { createWarnOnce, type Shell } from "../adapter/index.ts";
 import { toPluginTools } from "../commands/index.ts";
 import type { HookContext, PluginClient } from "./context.ts";
 import { createAnchor } from "./anchor.ts";
+import { createConfigHook } from "./config.ts";
 import { createIdleCheck } from "./idle-check.ts";
 import { preEditGate } from "./pre-edit.ts";
 import { specEditValidate } from "./spec-validate.ts";
@@ -41,5 +43,6 @@ export function createHooks(input: PluginInput): Hooks {
     "chat.message": anchor.chatMessage,
     event: createIdleCheck(ctx),
     tool: toPluginTools(),
+    config: createConfigHook(ctx),
   };
 }
