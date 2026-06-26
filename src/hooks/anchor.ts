@@ -40,6 +40,7 @@ export interface AnchorHooks {
 export function createAnchor(ctx: HookContext): AnchorHooks {
   /** Per-session anchor text (string = anchor, null = governed but un-anchorable). */
   const cache = new Map<string, string | null>();
+  const messageSeen = new Set<string>();
   const deliveredViaMessage = new Set<string>();
   let hostSupportsSystemTransform = false;
 
@@ -79,12 +80,20 @@ export function createAnchor(ctx: HookContext): AnchorHooks {
   }, onError);
 
   const chatMessage: ChatMessage = guarded(async (input, output) => {
-    if (hostSupportsSystemTransform) return; // the experimental hook handles it
-    if (deliveredViaMessage.has(input.sessionID)) return;
+    const sessionID = input.sessionID;
+    const firstMessage = !messageSeen.has(sessionID);
+    messageSeen.add(sessionID);
+    // chat.message is the fallback for hosts that lack system.transform; it fires
+    // BEFORE system.transform within a turn, so on the first message we cannot yet
+    // tell whether the experimental hook will deliver the anchor. Defer on the
+    // first message (avoiding a double injection on a host that supports both) and
+    // fall back only once a prior turn has shown the experimental hook never ran.
+    if (hostSupportsSystemTransform || firstMessage) return;
+    if (deliveredViaMessage.has(sessionID)) return;
 
-    const anchor = await computeAnchor(input.sessionID);
+    const anchor = await computeAnchor(sessionID);
     if (!anchor) return;
-    deliveredViaMessage.add(input.sessionID);
+    deliveredViaMessage.add(sessionID);
 
     const parts = output.parts as unknown as Array<{ type?: unknown; text?: unknown }>;
     const firstText = parts.find((part) => part.type === "text" && typeof part.text === "string");

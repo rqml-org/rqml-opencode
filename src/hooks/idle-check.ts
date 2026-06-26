@@ -13,7 +13,7 @@
  */
 import type { Hooks } from "@opencode-ai/plugin";
 
-import { findSpec, readStrictness, runRqml } from "../adapter/index.ts";
+import { findSpec, guarded, readStrictness, runRqml } from "../adapter/index.ts";
 import { formatDiagnostics } from "../adapter/diagnostics.ts";
 import { workspaceCheck } from "../adapter/workspace.ts";
 import { softPromptAllowed } from "../adapter/run-mode.ts";
@@ -40,9 +40,13 @@ export function createIdleCheck(ctx: HookContext): EventHook {
     } catch {
       toastShown = false;
     }
-    if (!toastShown) ctx.notify(banner); // headless: log the full banner where it is visible
+    const willSoftPrompt = Boolean(sessionID) && softPromptAllowed(toastShown);
+    // Always keep the verbatim diagnostics reachable: the soft prompt carries them
+    // to the agent when issued; otherwise log them, so a flagged check is never
+    // reduced to a content-free toast (REQ-HOOK-DIAGNOSTICS).
+    if (!willSoftPrompt) ctx.notify(banner);
 
-    if (sessionID && softPromptAllowed(toastShown)) {
+    if (willSoftPrompt) {
       try {
         await ctx.client.session.prompt({
           path: { id: sessionID },
@@ -61,8 +65,8 @@ export function createIdleCheck(ctx: HookContext): EventHook {
     }
   }
 
-  return async ({ event }) => {
-    if (event.type !== "session.idle") return;
+  return guarded(async ({ event }: { event: { type?: unknown; properties?: unknown } }) => {
+    if (event?.type !== "session.idle") return;
     const props = event.properties as { sessionID?: unknown } | undefined;
     const sessionID = typeof props?.sessionID === "string" ? props.sessionID : "";
 
@@ -99,5 +103,5 @@ export function createIdleCheck(ctx: HookContext): EventHook {
       sessionID,
       formatDiagnostics("workspace check failed — advisory; CI runs the same gate", ws.result, "rqml check --workspace"),
     );
-  };
+  }, () => ctx.warnOnce("idle-degraded", () => ctx.notify("RQML idle check failed unexpectedly; it is advisory and was skipped.")));
 }

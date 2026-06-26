@@ -16,11 +16,14 @@ jobs:
         with:
           node-version: "24"
       - run: npm ci
+      - run: npm install -g @rqml/cli
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
-      - run: npx -y @rqml/cli check
-      - run: npx -y @rqml/cli check --strictness strict
+        env:
+          RQML_REQUIRE_CLI: "1"
+      - run: rqml check
+      - run: rqml check --strictness strict
 
   # REQ-CRAFT-GUARD: PR-only, so main is not gated on the moving upstream craft.
   craft-drift:

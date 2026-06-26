@@ -72,26 +72,35 @@ test("TC-API-ABSENT: chat.message delivers the anchor when system.transform neve
     writeFileSync(join(root, "requirements.rqml"), MINIMAL_SPEC);
     const { ctx } = makeContext({ $: fakeShell({ exitCode: 0, stdout: SAMPLE_STATUS }), directory: root });
     const { chatMessage } = createAnchor(ctx);
-    const out = { message: {}, parts: [{ type: "text", text: "do the thing" }] };
-    await chatMessage({ sessionID: "s" } as never, out as never);
-    assert.match(out.parts[0].text, /RQML-OPENCODE-001/, "anchor prepended");
-    assert.match(out.parts[0].text, /do the thing/, "original message preserved");
+    // chat.message fires before system.transform, so the first message defers.
+    const out1 = { message: {}, parts: [{ type: "text", text: "first turn" }] };
+    await chatMessage({ sessionID: "s" } as never, out1 as never);
+    assert.equal(out1.parts[0].text, "first turn", "first message defers (system.transform may still fire this turn)");
+    // By the second message the host has shown it lacks system.transform -> fall back.
+    const out2 = { message: {}, parts: [{ type: "text", text: "second turn" }] };
+    await chatMessage({ sessionID: "s" } as never, out2 as never);
+    assert.match(out2.parts[0].text, /RQML-OPENCODE-001/, "anchor delivered via the message fallback");
+    assert.match(out2.parts[0].text, /second turn/, "original message preserved");
   } finally {
     cleanup(root);
   }
 });
 
-test("chat.message defers once system.transform has run (no double injection)", async () => {
+test("no double injection: chat.message (first) defers and only system.transform injects on a both-capable host", async () => {
   const root = tmpProject();
   try {
     writeFileSync(join(root, "requirements.rqml"), MINIMAL_SPEC);
     const { ctx } = makeContext({ $: fakeShell({ exitCode: 0, stdout: SAMPLE_STATUS }), directory: root });
     const anchor = createAnchor(ctx);
-    const [input, output] = sys();
-    await anchor.systemTransform(input as never, output as never); // marks host support
-    const out = { message: {}, parts: [{ type: "text", text: "hello" }] };
-    await anchor.chatMessage({ sessionID: "s" } as never, out as never);
-    assert.equal(out.parts[0].text, "hello", "chat.message must not inject once system.transform is active");
+    // Real first-turn order: chat.message fires BEFORE system.transform.
+    const msg = { message: {}, parts: [{ type: "text", text: "hello" }] };
+    await anchor.chatMessage({ sessionID: "s" } as never, msg as never);
+    const [sysIn, sysOut] = sys();
+    await anchor.systemTransform(sysIn as never, sysOut as never);
+    // The anchor must appear exactly once across both surfaces, not twice.
+    assert.equal(msg.parts[0].text, "hello", "chat.message deferred (did not inject)");
+    assert.equal(sysOut.system.length, 1, "system.transform injected exactly once");
+    assert.match(sysOut.system[0], /RQML-OPENCODE-001/);
   } finally {
     cleanup(root);
   }

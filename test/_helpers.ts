@@ -53,19 +53,26 @@ export function fakeShell(
   result: { exitCode: number; stdout?: string; stderr?: string } | { reject: string },
 ): Shell {
   const fn = (_s: TemplateStringsArray, ..._e: unknown[]): ShellInvocation => {
+    let nothrow = false;
     const chain = {
-      nothrow: () => chain,
+      nothrow: () => {
+        nothrow = true;
+        return chain;
+      },
       quiet: () => chain,
       cwd: (_d: string) => chain,
-      then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
-        ("reject" in result
-          ? Promise.reject(new Error(result.reject))
-          : Promise.resolve({
-              exitCode: result.exitCode,
-              stdout: result.stdout ?? "",
-              stderr: result.stderr ?? "",
-            })
-        ).then(onF, onR),
+      then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => {
+        if ("reject" in result) return Promise.reject(new Error(result.reject)).then(onF, onR);
+        // Model Bun's `$`: a non-zero exit throws unless `.nothrow()` was chained.
+        if (result.exitCode !== 0 && !nothrow) {
+          return Promise.reject(new Error(`exited ${result.exitCode}`)).then(onF, onR);
+        }
+        return Promise.resolve({
+          exitCode: result.exitCode,
+          stdout: result.stdout ?? "",
+          stderr: result.stderr ?? "",
+        }).then(onF, onR);
+      },
     } as unknown as ShellInvocation;
     return chain;
   };
@@ -99,6 +106,16 @@ export function realShell(): Shell {
 export function rqmlAvailable(): boolean {
   const r = spawnSync("rqml", ["--version"], { encoding: "utf8" });
   return !r.error;
+}
+
+/**
+ * The `skip` value for a real-CLI integration test: run when rqml is available,
+ * skip when it is absent — UNLESS RQML_REQUIRE_CLI is set (CI), where it returns
+ * `false` so the test runs and hard-fails instead of silently skipping.
+ */
+export function cliSkip(): false | string {
+  if (rqmlAvailable()) return false;
+  return process.env.RQML_REQUIRE_CLI ? false : "rqml CLI not on PATH";
 }
 
 /** Build a HookContext for tests, capturing notify() messages, toasts, and prompts. */

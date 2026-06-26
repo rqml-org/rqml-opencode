@@ -71,7 +71,8 @@ test("REQ-DOCS-ONBOARDING: every relative documentation link resolves", () => {
 test("REQ-CI-PARITY: CI runs the test suite and the authoritative rqml gate", () => {
   const ci = read(".github/workflows/ci.yml");
   assert.match(ci, /npm test/);
-  assert.match(ci, /@rqml\/cli check/, "CI runs rqml check");
+  assert.match(ci, /rqml check/, "CI runs rqml check");
+  assert.match(ci, /@rqml\/cli/, "CI installs the rqml CLI");
   assert.match(ci, /--strictness strict/, "CI runs the strict gate");
   assert.match(ci, /check:craft/, "CI runs the craft drift guard");
   assert.match(ci, /pull_request/);

@@ -24,6 +24,7 @@ import {
   type Shell,
   type ShellInvocation,
 } from "../src/adapter/index.ts";
+import { cliSkip } from "./_helpers.ts";
 
 // --- helpers -------------------------------------------------------------
 
@@ -64,19 +65,26 @@ function fakeShell(
   result: { exitCode: number; stdout?: string; stderr?: string } | { reject: string },
 ): Shell {
   const fn = (_s: TemplateStringsArray, ..._e: unknown[]): ShellInvocation => {
+    let nothrow = false;
     const chain = {
-      nothrow: () => chain,
+      nothrow: () => {
+        nothrow = true;
+        return chain;
+      },
       quiet: () => chain,
       cwd: (_d: string) => chain,
-      then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
-        ("reject" in result
-          ? Promise.reject(new Error(result.reject))
-          : Promise.resolve({
-              exitCode: result.exitCode,
-              stdout: result.stdout ?? "",
-              stderr: result.stderr ?? "",
-            })
-        ).then(onF, onR),
+      then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => {
+        if ("reject" in result) return Promise.reject(new Error(result.reject)).then(onF, onR);
+        // Model Bun's `$`: a non-zero exit throws unless `.nothrow()` was chained.
+        if (result.exitCode !== 0 && !nothrow) {
+          return Promise.reject(new Error(`exited ${result.exitCode}`)).then(onF, onR);
+        }
+        return Promise.resolve({
+          exitCode: result.exitCode,
+          stdout: result.stdout ?? "",
+          stderr: result.stderr ?? "",
+        }).then(onF, onR);
+      },
     } as unknown as ShellInvocation;
     return chain;
   };
@@ -246,7 +254,7 @@ test("REQ-STRICTNESS-RESPECT: reads declared strictness, walks up, defaults to s
 
 test(
   "TC-PARITY: runRqml relays the bare `rqml check` verdict unchanged",
-  { skip: rqmlAvailable() ? false : "rqml CLI not on PATH" },
+  { skip: cliSkip() },
   async () => {
     const root = tmpProject();
     try {
@@ -261,3 +269,20 @@ test(
     }
   },
 );
+
+test("REQ-THIN-ADAPTER: runRqml chains .nothrow(), so a non-zero exit resolves instead of throwing", async () => {
+  // The fake models Bun's `$`: awaiting a non-zero exit WITHOUT .nothrow() rejects.
+  await assert.rejects(async () => {
+    await fakeShell({ exitCode: 2 })`rqml check`;
+  });
+  // runRqml must chain .nothrow(); the same non-zero exit becomes a blocking verdict.
+  const res = await runRqml(fakeShell({ exitCode: 2, stdout: "drift" }), ["check"], { cwd: "/tmp" });
+  assert.equal(res.available, true);
+  assert.equal(res.verdict, "blocking");
+});
+
+test("RQML_REQUIRE_CLI: the real rqml CLI is on PATH when CI requires it", () => {
+  if (process.env.RQML_REQUIRE_CLI) {
+    assert.ok(rqmlAvailable(), "RQML_REQUIRE_CLI is set but the rqml CLI is not on PATH");
+  }
+});
