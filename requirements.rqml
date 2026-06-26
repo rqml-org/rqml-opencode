@@ -2371,6 +2371,50 @@
       <from><locator><local id="REQ-INSTALL-SMOKE"/></locator></from>
       <to><locator><external uri="test/install-smoke.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-CI-PARITY" type="implements">
+      <from><locator><external uri=".github/workflows/ci.yml" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CI-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-CONVERSION" type="implements">
+      <from><locator><external uri="README.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-CONVERSION"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-CONVERSION-2" type="implements">
+      <from><locator><external uri="docs/why-rqml-opencode.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-CONVERSION"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-ONBOARDING" type="implements">
+      <from><locator><external uri="README.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-ONBOARDING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-ONBOARDING-2" type="implements">
+      <from><locator><external uri="docs/quickstart.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-ONBOARDING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-ONBOARDING-3" type="implements">
+      <from><locator><external uri="docs/troubleshooting.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-ONBOARDING"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-DOCS-SURFACES" type="implements">
+      <from><locator><external uri="README.md" kind="code"/></locator></from>
+      <to><locator><local id="REQ-DOCS-SURFACES"/></locator></to>
+    </edge>
+    <edge id="E-VER-CI-PARITY" type="verifiedBy">
+      <from><locator><local id="REQ-CI-PARITY"/></locator></from>
+      <to><locator><external uri="test/docs-validation.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-DISTRIBUTION" type="verifiedBy">
+      <from><locator><local id="REQ-DISTRIBUTION"/></locator></from>
+      <to><locator><external uri="test/install-smoke.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-DOCS-CONVERSION" type="verifiedBy">
+      <from><locator><local id="REQ-DOCS-CONVERSION"/></locator></from>
+      <to><locator><external uri="test/docs-validation.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-DOCS-ONBOARDING" type="verifiedBy">
+      <from><locator><local id="REQ-DOCS-ONBOARDING"/></locator></from>
+      <to><locator><external uri="test/docs-validation.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
