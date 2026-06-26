@@ -1,0 +1,2099 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  requirements.rqml — rqml-opencode specified in RQML (more dogfooding).
+
+  This document specifies the opencode plugin that turns the deterministic
+  primitives of the RQML toolchain (rqml check / status / validate / show /
+  impact / link, the @rqml/mcp server) into a spec-first development loop
+  inside opencode. It is the third sibling of rqml-claude (RQML-CLAUDE-001)
+  and rqml-codex (RQML-CODEX-001), whose governance issue ISS-OTHER-AGENTS
+  scoped adapters for other agent hosts into their own repositories; this is
+  the opencode one.
+
+  The intent is the same — anchor on the spec, validate spec edits as they
+  happen, gate against the deterministic rqml check verdict — but opencode's
+  plugin model inverts where enforcement can live, and this spec captures that
+  inversion from the host's verified capabilities (June 2026, against the
+  @opencode-ai/plugin type definitions and the sst/opencode core source):
+
+  * opencode plugins are PROGRAMMATIC: an async JS/TS factory
+    `async ({ client, $, directory, worktree, project }) => Hooks` that shells
+    out to the rqml CLI through Bun's `$`. There is no declarative manifest
+    mapping host events to shell commands.
+  * There is NO hard turn-end gate. session.idle is delivered through the
+    fire-and-forget `event` hook (its promise is discarded), so a plugin
+    cannot block a turn or session from ending the way the Claude Stop hook or
+    the Codex decision:"block" can. The hard, synchronous block opencode does
+    offer is at the TOOL boundary: tool.execute.before throws to deny a call.
+  * Enforcement therefore moves from the finish line to the moment of action:
+    the pre-edit gate is the hard in-session lever, the turn-end check is
+    advisory, and CI is the authoritative gate. The plugin is honest about
+    that posture rather than implying a guarantee opencode cannot keep.
+
+  The spec leads the code: implementation coverage is zero by design at this
+  draft (see ISS-IMPL-ZERO), and implements/verifiedBy edges to artifacts will
+  be recorded with `rqml link` as each piece lands.
+-->
+<rqml xmlns="https://rqml.org/schema/2.1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="https://rqml.org/schema/2.1.0 https://rqml.org/schema/rqml-2.1.0.xsd"
+      version="2.1.0" docId="RQML-OPENCODE-001" status="draft">
+
+  <!-- ============================================================= -->
+  <!-- META                                                          -->
+  <!-- ============================================================= -->
+  <meta>
+    <title>rqml-opencode — RQML spec-first enforcement for opencode</title>
+    <system>rqml-opencode</system>
+    <summary>
+      An opencode plugin that drives spec-first development from the
+      deterministic rqml toolchain. A programmatic plugin anchors every
+      session on the project spec, validates spec edits as they happen, hard-
+      denies edits to code that implements unapproved requirements at the tool
+      boundary, and runs the rqml check gate as the agent goes idle. Because
+      opencode has no hook that can block a turn from ending, the turn-end
+      check is advisory and CI is the authoritative gate; the plugin says so
+      plainly rather than implying a guarantee the host cannot keep. The plugin
+      contains no requirements logic of its own: every verdict comes from the
+      rqml CLI exit codes and JSON, so what surfaces locally is exactly what
+      blocks CI.
+    </summary>
+    <authors>
+      <author>
+        <name>Garðar Guðgeirsson</name>
+        <role>RQML Maintainer</role>
+        <org>rqml.org</org>
+        <contact>https://github.com/gudgeirsson</contact>
+      </author>
+    </authors>
+    <dates>
+      <created>2026-06-26</created>
+      <updated>2026-06-26</updated>
+    </dates>
+    <conventions>
+      <normativeKeywords>
+        MUST, MUST NOT, SHALL, SHALL NOT, SHOULD, SHOULD NOT, and MAY are to be
+        interpreted as described in RFC 2119 / RFC 8174, mapped to the RQML
+        PriorityType vocabulary (must / should / may).
+      </normativeKeywords>
+      <idConventions>
+        IDs follow the upstream conventions: REQ-&lt;NAME&gt; for requirements,
+        GOAL-/QGOAL- for goals, ENT- for entities, SM-/ST-/TR- for behavior,
+        TC- for tests, DEC- for decisions, RISK-/OBS- for risks and obstacles.
+      </idConventions>
+    </conventions>
+  </meta>
+
+  <!-- ============================================================= -->
+  <!-- CATALOGS                                                      -->
+  <!-- ============================================================= -->
+  <catalogs>
+    <actors>
+      <actor id="ACT-AGENT" name="opencode Agent" type="system">
+        <description>
+          The opencode coding agent working inside a project. It reads the
+          spec, writes code, and is the subject of enforcement — the loop must
+          hold even when the agent forgets the process exists.
+        </description>
+      </actor>
+      <actor id="ACT-HOST" name="opencode Plugin Runtime" type="system">
+        <description>
+          The opencode plugin and hook runtime. It loads plugin factories from
+          npm packages and local directories, runs them in its Bun runtime,
+          calls their returned hooks (tool.execute.before/after, chat and
+          system transforms, the config hook, the event firehose), and merges
+          plugin-contributed configuration (MCP servers, commands,
+          instructions) into the resolved config. It spans the TUI, the server,
+          and the non-interactive `opencode run` mode, whose lifecycle delivery
+          is not uniform.
+        </description>
+      </actor>
+      <actor id="ACT-CLI" name="rqml CLI" type="system">
+        <description>
+          The deterministic verdict source (@rqml/cli). Every enforcement
+          decision the plugin surfaces originates here, via documented exit
+          codes and JSON output, invoked through Bun's shell.
+        </description>
+      </actor>
+      <actor id="ACT-DEV" name="Developer" type="human">
+        <description>
+          The human who installs the plugin, owns the spec, and approves
+          requirements. Enforcement must inform the developer, never silently
+          override them, and must be honest about how strong it actually is on
+          this host.
+        </description>
+      </actor>
+    </actors>
+
+    <stakeholders>
+      <stakeholder id="STK-TEAMS" name="Adopting Teams">
+        <concerns>
+          Spec-first development that materially improves agent output without
+          adding friction to every turn, with an honest account of what is
+          enforced in-session versus what only CI guarantees — and that can be
+          uninstalled without leaving residue.
+        </concerns>
+      </stakeholder>
+      <stakeholder id="STK-MAINTAINER" name="RQML Maintainer" org="rqml.org">
+        <concerns>
+          A thin, faithful adapter over the toolchain: no duplicated logic that
+          could drift from the engine, maximum reuse of the enforcement shape
+          proven in rqml-claude and rqml-codex (anchor, validate, gate), and
+          graceful degradation where opencode cannot match the siblings.
+        </concerns>
+      </stakeholder>
+    </stakeholders>
+
+    <constraints>
+      <constraint id="CON-PLUGIN-FORMAT" severity="blocking">
+        <statement>
+          The plugin MUST conform to the opencode plugin format: an npm package
+          (or local .opencode/plugins/ file) that exports an async plugin
+          factory of type Plugin from @opencode-ai/plugin, receiving
+          { client, $, directory, worktree, project } and returning a Hooks
+          object, with MCP, commands, and instructions contributed through the
+          documented configuration surfaces.
+        </statement>
+        <source>opencode plugin documentation (opencode.ai/docs/plugins) and the @opencode-ai/plugin type definitions.</source>
+      </constraint>
+      <constraint id="CON-NO-STOP-GATE" severity="blocking">
+        <statement>
+          opencode exposes no hook that can prevent a turn or session from
+          ending. session.idle is delivered through the fire-and-forget event
+          hook (its returned promise is discarded and exceptions are swallowed),
+          so the plugin MUST NOT attempt to hard-block turn completion and MUST
+          NOT represent the turn-end check as a hard gate. The only synchronous
+          hard block opencode offers is at the tool boundary
+          (tool.execute.before throwing).
+        </statement>
+        <source>Verified against packages/plugin/src/index.ts (Hooks interface) and packages/opencode/src/plugin/index.ts (event dispatch); open feature requests sst/opencode #16626 (session.stopping) and #16879 (event.sync) remain unmerged.</source>
+      </constraint>
+      <constraint id="CON-SEMI-INTERNAL-API" severity="high">
+        <statement>
+          The capabilities that give the plugin a zero-configuration experience
+          — programmatic registration of MCP servers, commands, and
+          instructions through the config hook, and dynamic context injection
+          through experimental.chat.system.transform — are present in the
+          @opencode-ai/plugin type definitions but are not advertised in the
+          public documentation, and the latter is in the experimental
+          namespace. The plugin MAY build on them only as feature-detected
+          enhancements, each with a documented manual fallback, and SHALL never
+          crash a session if their shape changes.
+        </statement>
+        <source>opencode config-hook and experimental hook surfaces (type definitions); see REQ-EXPERIMENTAL-API-RISK.</source>
+      </constraint>
+      <constraint id="CON-DETERMINISTIC" severity="blocking">
+        <statement>
+          No language model SHALL participate in any enforcement verdict the
+          plugin produces; verdicts come from the rqml CLI exit codes and JSON.
+        </statement>
+        <source>Upstream constraint CON-DETERMINISTIC-GATE (RQML-SELF-001).</source>
+      </constraint>
+      <constraint id="CON-OFFLINE" severity="high">
+        <statement>
+          Hooks SHALL work without network access once the toolchain is
+          installed; nothing is fetched at hook time.
+        </statement>
+        <source>Hooks run on every edit and idle event; latency and reliability budgets forbid network calls.</source>
+      </constraint>
+      <constraint id="CON-NODE" severity="high">
+        <statement>
+          The plugin runs in opencode's Bun runtime and invokes the rqml CLI as
+          a subprocess through Bun's shell; it MAY assume a Node.js runtime (18
+          or newer) reachable on the developer's machine for that CLI, since the
+          toolchain it drives requires one.
+        </statement>
+      </constraint>
+    </constraints>
+
+    <decisions>
+      <decision id="DEC-PLUGIN-PROGRAMMATIC" status="approved">
+        <context>
+          Unlike Claude Code and Codex, opencode has no declarative manifest
+          that maps lifecycle events to shell commands. Plugins are JS/TS
+          factories that return typed hook handlers and shell out through Bun's
+          `$`.
+        </context>
+        <decision>
+          Implement the adapter as a single programmatic opencode plugin: an
+          async factory returning the hooks the loop needs, with every rqml
+          invocation going through the injected `$` shell. The plugin is code,
+          not configuration.
+        </decision>
+        <alternatives>
+          A declarative manifest (rejected: opencode has none); a separate
+          background daemon (rejected: opencode already hosts the plugin in its
+          runtime and gives it the SDK client and shell).
+        </alternatives>
+        <consequences>
+          The thin-adapter invariant (DEC-THIN-ADAPTER) must be defended in
+          code review rather than by structure, because JS makes it easy to
+          accidentally compute a verdict instead of delegating it.
+        </consequences>
+      </decision>
+      <decision id="DEC-PRE-TOOL-GATE-CENTRAL" status="approved">
+        <context>
+          opencode's tool.execute.before hook is awaited and can throw to abort
+          a tool call before it runs, scoped by the target file path; this is a
+          stronger and earlier hard block than the siblings' optional
+          PreToolUse checkpoint. There is no equivalent block at turn end
+          (CON-NO-STOP-GATE).
+        </context>
+        <decision>
+          Make tool.execute.before the primary synchronous enforcement point:
+          deny an edit to code already linked by an implements edge to a
+          non-approved requirement. Pair it with tool.execute.after for spec-
+          edit validation feedback.
+        </decision>
+        <alternatives>
+          Keep enforcement at turn end like the siblings (rejected: opencode
+          cannot block turn end); make the pre-edit gate advisory only
+          (rejected: it discards the one hard, deterministic in-session lever
+          the host actually provides).
+        </alternatives>
+        <consequences>
+          Enforcement is earlier and stronger for linked code, but it does not
+          see edits performed by subagents spawned through the task tool
+          (sst/opencode #5894); that boundary must be disclosed
+          (REQ-PREIMPL-COVERAGE-DISCLOSURE) and is covered by CI. Recorded as
+          ADR-0001.
+        </consequences>
+      </decision>
+      <decision id="DEC-SOFT-TURN-END" status="approved">
+        <context>
+          The siblings' defining feature is a hard stop gate: the turn cannot
+          end while rqml check is non-zero. opencode cannot block turn end
+          (CON-NO-STOP-GATE); session.idle is observed after the agent loop has
+          already broken.
+        </context>
+        <decision>
+          On session.idle, run rqml check at the project's strictness and
+          surface any failure as diagnostics through a toast and, in long-lived
+          interactive (TUI/server) sessions only, an optional soft continuation
+          prompt via the SDK client. The check SHALL NOT block and SHALL NOT be
+          described as a hard gate. CI (REQ-CI-PARITY) is the authoritative
+          enforcement boundary, and the divergence is stated openly
+          (REQ-ENFORCEMENT-HONESTY).
+        </decision>
+        <alternatives>
+          Always inject a continuation prompt to mimic the sibling block
+          (rejected: racy and unreliable in non-interactive `opencode run`,
+          model-defeatable, and it clutters the transcript with synthetic user
+          messages); observe-and-log only with no continuation (rejected: gives
+          up the in-session nudge to finish the loop where it can be delivered
+          safely).
+        </alternatives>
+        <consequences>
+          The product promise becomes "fast in-session feedback plus a hard
+          pre-edit gate, with CI as the authoritative gate" rather than "the
+          turn cannot end on a failing check." Honesty about that is a first-
+          class requirement, not a footnote. Recorded as ADR-0002.
+        </consequences>
+      </decision>
+      <decision id="DEC-CONFIG-HOOK-REGISTER" status="approved">
+        <context>
+          opencode plugins can mutate the resolved configuration in the config
+          hook, registering MCP servers, JSON commands, and instruction files
+          with no edit to opencode.json by the developer. The hook is real
+          (confirmed in the type definitions and core runtime) but semi-
+          internal (CON-SEMI-INTERNAL-API).
+        </context>
+        <decision>
+          Perform all zero-touch registration — the @rqml/mcp server, the
+          command surfaces, and the vendored authoring craft — by in-place
+          mutation in the config hook, feature-detected, with a documented
+          manual fallback (opencode.json entries) for every contribution.
+        </decision>
+        <consequences>
+          Installation is a single plugin entry when the host honors the config
+          hook, and a documented two-step setup when it does not; either way the
+          plugin never fails because a contribution did not register. Recorded as
+          ADR-0003.
+        </consequences>
+      </decision>
+      <decision id="DEC-CONTEXT-INJECTION" status="approved">
+        <context>
+          The siblings inject a freshly computed rqml status summary at session
+          start. opencode has no SessionStart string hook; the closest dynamic
+          mechanism is experimental.chat.system.transform (push the live status
+          onto the system-prompt array), with chat.message part injection as a
+          fallback and a static instructions file as the floor.
+        </context>
+        <decision>
+          Inject the dynamic anchor through experimental.chat.system.transform
+          when present, falling back to a chat.message text part, and finally to
+          a static instructions file. Inject a compact status and expand on
+          demand to avoid re-sending the whole spec every turn.
+        </decision>
+        <consequences>
+          The anchor is dynamic where the host allows and static where it does
+          not; the experimental dependency is isolated behind feature detection
+          (REQ-EXPERIMENTAL-API-RISK). Recorded as ADR-0003.
+        </consequences>
+      </decision>
+      <decision id="DEC-COMMAND-SURFACES" status="approved">
+        <context>
+          Claude ships its command surfaces as commands/*.md and Codex ships
+          them as skills; opencode has neither as a plugin-distributable bundle.
+          opencode commands are on-disk markdown or JSON entries in the
+          configuration, and plugins can also register custom tools the agent
+          can call.
+        </context>
+        <decision>
+          Ship the command surfaces (init, status, check, design, plan, review)
+          as JSON commands injected through the config hook, and additionally
+          expose the same actions as plugin-registered tools and through the
+          bundled @rqml/mcp server, so the surfaces work even where config-
+          command injection is unavailable. Document the on-disk markdown form
+          as a manual option.
+        </decision>
+        <alternatives>
+          Bundling markdown command files inside the npm package (rejected: no
+          documented path for opencode to discover them from an installed
+          package); relying on a single delivery mechanism (rejected: leaves the
+          surfaces dark if that one path is unsupported on a given host).
+        </alternatives>
+        <consequences>
+          The surfaces are resilient to which registration paths a host
+          supports, at the cost of describing the same action through more than
+          one channel; a forthcoming opencode v2 plugin API may offer first-
+          class command registration and is tracked as ISS-V2-PLUGIN-API.
+          Recorded as ADR-0004.
+        </consequences>
+      </decision>
+      <decision id="DEC-DISTRIBUTION-NPM" status="review">
+        <context>
+          opencode has no plugin marketplace and no git-URL install. Plugins are
+          npm packages listed in opencode.json's plugin array (auto-installed
+          via Bun) or local files under .opencode/plugins/.
+        </context>
+        <decision>
+          Distribute the plugin as a single published npm package as the
+          canonical install, and document the local-file form for development
+          and air-gapped use.
+        </decision>
+        <consequences>
+          The sibling self-hosting-marketplace requirement collapses to
+          publishing one npm package; there is no separate distribution
+          manifest to keep in sync.
+        </consequences>
+      </decision>
+      <decision id="DEC-THIN-ADAPTER" status="approved">
+        <context>
+          The toolchain already computes validation, coverage, drift, impact,
+          and extraction deterministically, and CI runs the same CLI.
+        </context>
+        <decision>
+          The plugin SHALL contain no requirements logic of its own. It is an
+          adapter: hooks shell out to the rqml CLI, the command surfaces wrap
+          CLI invocations, and agent tools come from the unmodified @rqml/mcp
+          server.
+        </decision>
+        <alternatives>
+          Reimplementing checks in plugin code (rejected: two implementations
+          drift apart and local verdicts diverge from CI).
+        </alternatives>
+        <consequences>
+          Local behavior is bit-identical to the CI gate; plugin code stays
+          small enough to audit in minutes.
+        </consequences>
+      </decision>
+      <decision id="DEC-CLI-FOR-VERDICTS" status="approved">
+        <context>
+          The toolchain offers two surfaces: the CLI and the MCP server. Hooks
+          run headless and must read exit codes; the agent's interactive loop
+          benefits from structured tools.
+        </context>
+        <decision>
+          Hooks SHALL invoke the rqml CLI through Bun's shell; the agent's
+          interactive loop (reading requirements, impact analysis, recording
+          links) SHALL go through the bundled @rqml/mcp server.
+        </decision>
+        <consequences>
+          Each surface is used where it is strongest; both are backed by one
+          engine, so they cannot disagree.
+        </consequences>
+      </decision>
+      <decision id="DEC-FAIL-OPEN" status="approved">
+        <context>
+          The plugin may be installed where the rqml CLI is missing, broken, the
+          host omits an expected hook, or the project has no spec at all.
+        </context>
+        <decision>
+          When the toolchain is unavailable or the project is not RQML-governed,
+          the plugin SHALL fail open: warn at most once, block nothing, and add
+          no per-turn overhead. In particular, a CLI error in tool.execute.before
+          SHALL NOT throw, so a missing or hung toolchain never bricks an edit.
+        </decision>
+        <alternatives>
+          Fail closed (rejected: a missing binary would brick every session;
+          adoption dies on the first false block).
+        </alternatives>
+        <consequences>
+          Enforcement is only as strong as the environment is healthy; CI
+          remains the backstop that always runs the real gate.
+        </consequences>
+      </decision>
+      <decision id="DEC-VENDOR-CRAFT" status="approved">
+        <context>
+          The authoring craft (document structure, statement quality, identity,
+          traceability) is canonical in rqml-skill and vendored into the sibling
+          plugins, kept current by rqml-skill's automated craft-sync.
+        </context>
+        <decision>
+          Vendor rqml-skill's canonical references — authoring.md and
+          monorepo.md — into the plugin, contribute them as instruction files,
+          slim any bundled activation text to pointers, and add a CI drift
+          guard. The plugin re-expresses no craft or scope model of its own. See
+          rqml-skill ADR-0009 (DEC-CRAFT-HOME).
+        </decision>
+        <consequences>
+          One source of truth for the craft; the vendored copy stays offline and
+          in-context; updates arrive as sync pull requests; the guard catches
+          drift on pull requests.
+        </consequences>
+      </decision>
+    </decisions>
+
+    <risks>
+      <risk id="RISK-FALSE-ASSURANCE" severity="high">
+        <statement>
+          The developer or the agent believes the turn-end check enforces the
+          spec the way the siblings' stop gate does, ships against a failing
+          check, and discovers only in CI that nothing blocked locally.
+        </statement>
+        <mitigation>
+          The plugin states plainly, at the anchor and in the status surface and
+          docs, that turn-end checking is advisory and CI is authoritative
+          (REQ-ENFORCEMENT-HONESTY, BR-NO-FALSE-ASSURANCE).
+        </mitigation>
+      </risk>
+      <risk id="RISK-API-DRIFT" severity="high">
+        <statement>
+          A semi-internal or experimental capability the plugin relies on — the
+          config hook, experimental.chat.system.transform — is renamed or
+          removed by an opencode release, and the plugin breaks or crashes a
+          session.
+        </statement>
+        <mitigation>
+          Every such use is feature-detected with a documented manual fallback,
+          and a failure to register or inject degrades the plugin rather than
+          throwing (REQ-EXPERIMENTAL-API-RISK, CON-SEMI-INTERNAL-API).
+        </mitigation>
+      </risk>
+      <risk id="RISK-SUBAGENT-GAP" severity="medium">
+        <statement>
+          Edits performed by subagents spawned through the task tool bypass the
+          pre-edit gate (sst/opencode #5894), so unapproved-requirement code can
+          land in-session without a local block.
+        </statement>
+        <mitigation>
+          The coverage boundary is disclosed (REQ-PREIMPL-COVERAGE-DISCLOSURE),
+          and CI runs the full gate over all changes regardless of who wrote
+          them (REQ-CI-PARITY).
+        </mitigation>
+      </risk>
+      <risk id="RISK-LATENCY" severity="high">
+        <statement>
+          Hook overhead on every edit and idle event makes the plugin feel slow,
+          and developers disable it.
+        </statement>
+        <mitigation>
+          Hooks run the sub-second rqml CLI offline (upstream QGOAL-CHECK-SPEED);
+          dormancy in non-RQML projects costs one spec-discovery test.
+        </mitigation>
+      </risk>
+      <risk id="RISK-FALSE-BLOCK" severity="high">
+        <statement>
+          The pre-edit gate denies edits the team considers legitimate, training
+          developers to uninstall the plugin.
+        </statement>
+        <mitigation>
+          The gate denies only edits to code already linked to a non-approved
+          requirement — the toolchain's deterministic approval-gate verdict —
+          surfaces the exact requirement, and fails open on any CLI error.
+        </mitigation>
+      </risk>
+      <risk id="RISK-CONTRACT-DRIFT" severity="medium">
+        <statement>
+          The plugin's interpretation of CLI exit codes or JSON drifts from the
+          toolchain as versions evolve.
+        </statement>
+        <mitigation>
+          The plugin consumes only the documented, stable contract (exit codes
+          0/1/2/64 and the JSON report shapes) and declares a compatible
+          toolchain version range.
+        </mitigation>
+      </risk>
+      <risk id="RISK-CRAFT-DRIFT" severity="medium">
+        <statement>
+          The vendored authoring craft falls out of step with the canonical
+          rqml-skill reference, or is edited locally instead of upstream.
+        </statement>
+        <mitigation>
+          rqml-skill's craft-sync opens a refresh pull request on change, and a
+          CI drift guard (REQ-CRAFT-GUARD) fails when the vendored copy diverges
+          from the canonical source.
+        </mitigation>
+      </risk>
+    </risks>
+  </catalogs>
+
+  <!-- ============================================================= -->
+  <!-- DOMAIN                                                        -->
+  <!-- ============================================================= -->
+  <domain>
+    <overview>
+      The domain is the enforcement harness itself: the programmatic plugin
+      opencode loads, the hooks it returns, the configuration it contributes,
+      the verdicts it consumes from the rqml CLI, and the project marker that
+      activates it.
+    </overview>
+    <entities>
+      <entity id="ENT-PLUGIN" name="Plugin">
+        <description>
+          The installable unit: an npm package (or local file) exporting an
+          async opencode plugin factory that returns the hooks and contributes
+          the configuration the loop needs.
+        </description>
+        <attr id="ATTR-PLUGIN-NAME" name="name" type="string" required="true">
+          <description>The published npm package name listed in opencode.json's plugin array.</description>
+        </attr>
+      </entity>
+      <entity id="ENT-HOOK" name="Hook Handler">
+        <description>
+          A function the plugin returns on the Hooks object that opencode calls
+          at a defined point: tool.execute.before, tool.execute.after,
+          experimental.chat.system.transform, config, or the event firehose.
+        </description>
+        <attr id="ATTR-HOOK-KIND" name="kind" type="enum:tool.execute.before,tool.execute.after,chat.system.transform,config,event" required="true">
+          <description>Which opencode hook the handler binds to.</description>
+        </attr>
+        <attr id="ATTR-HOOK-BLOCKS" name="canBlock" type="boolean" required="true">
+          <description>Whether throwing from the handler aborts the action (true only for tool.execute.before).</description>
+        </attr>
+      </entity>
+      <entity id="ENT-REGISTRATION" name="Config Contribution">
+        <description>
+          An in-place mutation the plugin performs in the config hook to
+          register an MCP server, a command, or an instruction file, with a
+          documented manual fallback.
+        </description>
+        <attr id="ATTR-REG-TARGET" name="target" type="enum:mcp,command,instructions" required="true">
+          <description>Which configuration map the contribution populates.</description>
+        </attr>
+      </entity>
+      <entity id="ENT-VERDICT" name="Gate Verdict">
+        <description>
+          The result of an rqml CLI invocation as consumed by the plugin: the
+          process exit code plus the machine-readable JSON report.
+        </description>
+        <attr id="ATTR-VERDICT-EXIT" name="exitCode" type="enum:0,1,2,64" required="true">
+          <description>Documented upstream exit-code contract.</description>
+        </attr>
+      </entity>
+      <entity id="ENT-MARKER" name="Project Marker">
+        <description>
+          The signal that a project is RQML-governed: the nearest enclosing
+          .rqml spec document — in the working directory or a parent directory
+          up to the repository root (conventionally requirements.rqml).
+        </description>
+      </entity>
+    </entities>
+    <businessRules>
+      <rule id="BR-DORMANT">
+        <statement>
+          When no governing spec exists in the working directory or any parent
+          directory, the plugin MUST do nothing beyond the discovery test
+          itself.
+        </statement>
+      </rule>
+      <rule id="BR-NO-MODEL">
+        <statement>
+          No enforcement verdict surfaced by the plugin may originate from a
+          language model.
+        </statement>
+      </rule>
+      <rule id="BR-SHOW-YOUR-WORK">
+        <statement>
+          Whenever the plugin denies an edit or flags a failing check, it MUST
+          surface the CLI diagnostics that justify it, verbatim.
+        </statement>
+      </rule>
+      <rule id="BR-NO-FALSE-ASSURANCE">
+        <statement>
+          The plugin MUST NOT represent the turn-end check as a hard gate.
+          Honesty that in-session turn-end checking is advisory, with CI
+          authoritative, outranks the appearance of protection.
+        </statement>
+      </rule>
+      <rule id="BR-NEVER-BRICK">
+        <statement>
+          Only the pre-edit gate may throw, and only on a deterministic deny
+          verdict from the toolchain. Any other hook, and any CLI error, MUST
+          fail open: surface information, never abort a tool call or crash a
+          session.
+        </statement>
+      </rule>
+      <rule id="BR-EXIT-CONTRACT">
+        <statement>
+          Exit code 0 means proceed; 1 means validation failure; 2 means
+          blocking drift or coverage; 64 means the plugin invoked the CLI
+          incorrectly and MUST treat it as its own bug, not the user's.
+        </statement>
+      </rule>
+    </businessRules>
+  </domain>
+
+  <!-- ============================================================= -->
+  <!-- GOALS                                                         -->
+  <!-- ============================================================= -->
+  <goals>
+    <goal id="GOAL-ENFORCED-LOOP" title="Spec-anchored, with a hard gate where the host allows one" priority="must" ownerRef="STK-TEAMS">
+      <statement>
+        Keep the spec-first loop holding through an opencode session by
+        anchoring on the spec, validating spec edits in-turn, hard-denying
+        edits to code that implements unapproved requirements, and running the
+        rqml check verdict as the agent goes idle.
+      </statement>
+      <rationale>
+        Upstream obstacle OBS-VOLUNTARY: agents drift because compliance is
+        voluntary. opencode cannot block turn end, so the loop is held at the
+        earliest hard lever it does offer — the edit boundary — plus an
+        advisory turn-end check and CI.
+      </rationale>
+    </goal>
+    <goal id="GOAL-PARITY" title="Local equals CI, with CI authoritative" priority="must" ownerRef="STK-MAINTAINER">
+      <statement>
+        What the plugin surfaces locally SHALL be exactly what blocks CI: the
+        same CLI, the same strictness, the same diagnostics. Because opencode
+        cannot block turn end, CI is the authoritative enforcement boundary.
+      </statement>
+      <rationale>
+        Divergent local/CI verdicts destroy trust in both; one engine and a
+        thin adapter make divergence structurally impossible, and naming CI as
+        authoritative keeps the promise honest.
+      </rationale>
+    </goal>
+    <goal id="GOAL-HONEST-POSTURE" title="Honest about how strong enforcement is" priority="must" ownerRef="STK-TEAMS">
+      <statement>
+        The plugin SHALL always tell the developer and the agent the truth about
+        what is enforced in-session: a hard pre-edit gate (for linked code), an
+        advisory turn-end check, and CI as the authoritative gate.
+      </statement>
+      <rationale>
+        Conflating "installed" with "hard-enforcing" is the most dangerous
+        failure mode on a host that cannot block turn end (RISK-FALSE-ASSURANCE).
+      </rationale>
+    </goal>
+    <goal id="GOAL-ZERO-CONFIG" title="Minimal ceremony" priority="should" ownerRef="STK-TEAMS">
+      <statement>
+        Installing the plugin into an RQML-governed project SHALL require no
+        configuration beyond the single plugin entry when the host honors
+        programmatic registration, and a documented short manual setup when it
+        does not; installing it elsewhere SHALL cost nothing.
+      </statement>
+    </goal>
+
+    <qgoal id="QGOAL-LATENCY" title="Imperceptible overhead" priority="must">
+      <statement>Hook executions SHALL be fast enough not to change how the session feels.</statement>
+      <metric>
+        Detection in a non-RQML project: a single discovery test. Pre-edit,
+        validate, and idle hooks: bounded by the upstream interactive-latency
+        target (about one second on a typical project).
+      </metric>
+    </qgoal>
+    <qgoal id="QGOAL-SIGNAL" title="High-signal feedback" priority="must">
+      <statement>Every denial and every flagged check SHALL be actionable; none without diagnostics.</statement>
+      <metric>
+        100% of denials and flagged checks carry the verbatim CLI diagnostics
+        and the command to reproduce them.
+      </metric>
+    </qgoal>
+
+    <obstacle id="OBS-AGENT-DRIFT" title="Agent forgets the process" likelihood="high" severity="high">
+      <statement>
+        Long sessions rotate context; the agent stops consulting the spec and
+        ships unspecified behavior.
+      </statement>
+      <mitigation>Session anchoring, the pre-edit gate, and the idle check make forgetting recoverable.</mitigation>
+    </obstacle>
+    <obstacle id="OBS-NO-HARD-GATE" title="No hard turn-end gate on the host" likelihood="high" severity="high">
+      <statement>
+        opencode cannot block a turn from ending, so the agent can finish a turn
+        with a failing rqml check; the in-session safety net is advisory only.
+      </statement>
+      <mitigation>The pre-edit hard block, the honest advisory idle check, and CI as the authoritative gate together compensate.</mitigation>
+    </obstacle>
+    <obstacle id="OBS-API-DRIFT" title="Semi-internal APIs change" likelihood="medium" severity="high">
+      <statement>
+        The config hook or experimental injection API the plugin depends on is
+        renamed or removed by an opencode release.
+      </statement>
+      <mitigation>Feature detection and documented manual fallbacks degrade the plugin instead of breaking it.</mitigation>
+    </obstacle>
+    <obstacle id="OBS-UNINSTALL" title="Friction-driven uninstall" likelihood="medium" severity="high">
+      <statement>
+        If the plugin nags, denies legitimately-needed edits, or slows turns,
+        developers remove it and enforcement disappears entirely.
+      </statement>
+      <mitigation>Fail-open posture, a narrowly scoped pre-edit gate, sub-second hooks, and honest messaging.</mitigation>
+    </obstacle>
+
+    <goalLink id="GL-DRIFT-THREATENS" from="OBS-AGENT-DRIFT" to="GOAL-ENFORCED-LOOP" type="threatens" confidence="0.9"/>
+    <goalLink id="GL-NOGATE-THREATENS" from="OBS-NO-HARD-GATE" to="GOAL-ENFORCED-LOOP" type="threatens" confidence="0.9"/>
+    <goalLink id="GL-NOGATE-HONEST" from="OBS-NO-HARD-GATE" to="GOAL-HONEST-POSTURE" type="threatens" confidence="0.8"/>
+    <goalLink id="GL-APIDRIFT-THREATENS" from="OBS-API-DRIFT" to="GOAL-ZERO-CONFIG" type="threatens" confidence="0.8"/>
+    <goalLink id="GL-UNINSTALL-THREATENS" from="OBS-UNINSTALL" to="GOAL-ENFORCED-LOOP" type="threatens" confidence="0.8"/>
+    <goalLink id="GL-ZERO-REFINES" from="GOAL-ZERO-CONFIG" to="GOAL-ENFORCED-LOOP" type="refines" confidence="0.7"/>
+    <goalLink id="GL-HONEST-REFINES" from="GOAL-HONEST-POSTURE" to="GOAL-PARITY" type="refines" confidence="0.7"/>
+  </goals>
+
+  <!-- ============================================================= -->
+  <!-- SCENARIOS                                                     -->
+  <!-- ============================================================= -->
+  <scenarios>
+    <scenario id="SCN-ANCHOR" title="Session starts in an RQML project" actorRef="ACT-AGENT">
+      <narrative>
+        1. An opencode session starts in a project containing requirements.rqml.
+        2. On the first model request, the plugin's system-transform hook runs
+           rqml status and pushes the summary — spec id, coverage gaps, drift
+           state — onto the system prompt, with a one-line reminder of the loop
+           (show, impact, implement, link, check) and an honest note that
+           turn-end checking is advisory and CI is authoritative.
+        3. The agent begins work already anchored on the spec.
+      </narrative>
+    </scenario>
+    <scenario id="SCN-SPEC-EDIT" title="Agent edits the spec" actorRef="ACT-AGENT">
+      <narrative>
+        1. The agent writes or edits an .rqml document with the edit or write
+           tool.
+        2. The tool.execute.after hook validates the touched document with the
+           CLI.
+        3. When validation fails, the diagnostics replace or annotate the tool
+           result so they reach the agent in the same turn, and the agent fixes
+           the document before moving on.
+      </narrative>
+    </scenario>
+    <scenario id="SCN-PRE-EDIT-DENY" title="Agent edits code for an unapproved requirement" actorRef="ACT-AGENT">
+      <narrative>
+        1. The agent attempts an edit to a file already linked by an implements
+           edge to a requirement that is not approved.
+        2. The tool.execute.before hook consults the toolchain's approval-gate
+           verdict; the requirement is not approved.
+        3. The hook throws, the edit is aborted before it runs, and the message
+           names the requirement and the command to reproduce the verdict. The
+           agent gets the requirement approved (or the developer waives it)
+           before retrying.
+      </narrative>
+    </scenario>
+    <scenario id="SCN-IDLE-CHECK" title="Agent finishes a turn" actorRef="ACT-AGENT">
+      <narrative>
+        1. The agent considers the task complete and the session goes idle.
+        2. The plugin runs rqml check at the project's strictness.
+        3. Exit 0: nothing is shown. Non-zero: the diagnostics are surfaced as a
+           toast and, in an interactive session, an optional soft continuation
+           prompt re-engages the agent; the turn is never blocked, and the
+           message states that CI will enforce the same verdict.
+      </narrative>
+    </scenario>
+    <misuseCase id="MIS-GHOST" title="Unspecified implementation" actorRef="ACT-AGENT">
+      <narrative>
+        The agent implements behavior with no corresponding requirement. For
+        code already linked to a non-approved requirement, the pre-edit gate
+        denies the edit; for net-new, not-yet-linked code, the idle check flags
+        the coverage gap advisorily and CI blocks the merge at strict and
+        certified levels until the requirement is captured or waived.
+      </narrative>
+    </misuseCase>
+    <edgeCase id="EDGE-NO-SPEC" title="Plugin installed in a non-RQML project" actorRef="ACT-DEV">
+      <narrative>
+        No .rqml document exists. Every hook returns immediately after the
+        discovery test; no context is injected, nothing is denied, and the
+        developer notices the plugin only if they invoke the init surface to
+        adopt it.
+      </narrative>
+    </edgeCase>
+    <edgeCase id="EDGE-NO-CLI" title="Toolchain missing" actorRef="ACT-DEV">
+      <narrative>
+        The project has a spec but the rqml CLI is not installed. The plugin
+        warns once per session with the install command and stays out of the
+        way: no edit is denied, no session is crashed — fail open.
+      </narrative>
+    </edgeCase>
+    <edgeCase id="EDGE-SUBAGENT" title="Edit by a spawned subagent" actorRef="ACT-AGENT">
+      <narrative>
+        The agent spawns a subagent through the task tool, which edits code for
+        a non-approved requirement. tool.execute.before does not see the
+        subagent's internal edit, so the local gate does not fire; the plugin
+        has disclosed this boundary, and CI catches the violation.
+      </narrative>
+    </edgeCase>
+    <edgeCase id="EDGE-API-ABSENT" title="A relied-upon host API is unavailable" actorRef="ACT-HOST">
+      <narrative>
+        An opencode release renames or removes the config hook or the
+        experimental system-transform. The plugin's feature detection finds the
+        capability absent, falls back to the documented manual path (an
+        opencode.json MCP entry, a static instructions anchor), surfaces a one-
+        time note, and never crashes the session.
+      </narrative>
+    </edgeCase>
+  </scenarios>
+
+  <!-- ============================================================= -->
+  <!-- REQUIREMENTS                                                  -->
+  <!-- ============================================================= -->
+  <requirements>
+
+    <reqPackage id="PKG-PLUGIN" title="Plugin packaging" ownerRef="STK-MAINTAINER">
+      <description>The installable artifact and its distribution.</description>
+      <req id="REQ-MANIFEST" type="CR" title="Conformant opencode plugin" status="approved" priority="must">
+        <statement>
+          The repository SHALL build a valid opencode plugin: an npm package
+          whose default export is an async plugin factory of type Plugin from
+          @opencode-ai/plugin, returning a Hooks object, installable by adding
+          the package to opencode.json's plugin array.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-MANIFEST-LOADS">
+            <given>An opencode installation</given>
+            <when>The package is added to the plugin array and opencode starts</when>
+            <then>The plugin loads without errors and its hooks and contributions are active.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-PLUGIN-FACTORY" type="CR" title="Conformant plugin factory" status="approved" priority="must">
+        <statement>
+          The exported factory SHALL consume only the documented plugin input
+          (client, $, directory, worktree, project), SHALL invoke the rqml CLI
+          exclusively through the injected Bun shell, and SHALL construct
+          successfully in any project, deferring all RQML-specific behavior to
+          its hooks so it adds nothing in a non-governed project.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-FACTORY">
+            <given>The plugin factory</given>
+            <when>It is constructed in a project with no spec</when>
+            <then>It returns its hooks without error and performs no rqml invocation until a hook fires in a governed project.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-DISTRIBUTION" type="DR" title="npm distribution" status="approved" priority="should">
+        <statement>
+          The plugin SHALL be published as a single npm package as its canonical
+          install, referenced in opencode.json's plugin array, and SHALL
+          document the local .opencode/plugins/ file form for development and
+          air-gapped use. No marketplace or git-URL install is assumed.
+        </statement>
+      </req>
+      <req id="REQ-THIN-ADAPTER" type="CR" title="No spec logic in the plugin" status="approved" priority="must">
+        <statement>
+          The plugin SHALL NOT reimplement any validation, coverage, drift,
+          impact, or extraction logic; every verdict and every artifact view
+          SHALL come from the rqml CLI or the @rqml/mcp server.
+        </statement>
+        <rationale>
+          One engine, many surfaces (upstream GOAL-REUSABLE-ENGINE): a second
+          implementation would drift and break local/CI parity. Because the
+          adapter is JavaScript (DEC-PLUGIN-PROGRAMMATIC), this is defended in
+          review rather than by structure.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-THIN">
+            <given>The plugin source tree</given>
+            <when>It is inspected</when>
+            <then>No code parses or evaluates RQML documents or computes a verdict; hooks only invoke the toolchain and relay its output.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-DORMANT" type="NFR" title="Dormant outside RQML projects" status="approved" priority="must">
+        <statement>
+          When no governing spec exists — no .rqml spec document in the working
+          directory or any parent directory up to the repository root — every
+          hook SHALL return immediately after the discovery test, inject
+          nothing, deny nothing, and contribute nothing.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-DORMANT">
+            <given>A session whose working directory has no .rqml document in it or any parent directory</given>
+            <when>Edit, idle, and request events fire</when>
+            <then>No context is injected and no action is denied.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-DISCOVERY" type="FR" title="Nearest-enclosing spec discovery" status="approved" priority="must">
+        <statement>
+          The plugin SHALL resolve the governing spec by checking the working
+          directory (and, for an edit, the edited file's directory) and then
+          each successive parent directory, up to the repository root, using the
+          nearest enclosing requirements.rqml (or sole .rqml file; a directory
+          named .rqml is not a spec). A session or edit in a subdirectory of a
+          governed project is therefore governed by that project's spec, not
+          treated as dormant.
+        </statement>
+        <rationale>
+          Resolving from the working directory alone would leave a session in a
+          monorepo subdirectory silently dormant — enforcement off where it
+          should be on, breaking parity (GOAL-PARITY). The nearest-enclosing
+          rule matches the canonical model (rqml-skill REQ-MONOREPO-REF) and the
+          CLI's own resolution.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-DISCOVERY">
+            <given>A session whose working directory is a subdirectory of a project that has a requirements.rqml</given>
+            <when>A hook resolves the governing spec</when>
+            <then>It finds that project's requirements.rqml and the session is governed, not dormant.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-CI-PARITY" type="NFR" title="CI is the authoritative gate" status="approved" priority="must">
+        <statement>
+          Continuous integration SHALL run rqml check (and rqml check
+          --strictness strict) plus the plugin test suite on every pull request
+          and main-branch push, so the deterministic verdict the plugin surfaces
+          locally is enforced authoritatively at merge — the backstop for the
+          host's missing turn-end gate and for edits the pre-edit gate cannot
+          see.
+        </statement>
+        <rationale>
+          Because opencode cannot block turn end (CON-NO-STOP-GATE) and the pre-
+          edit gate misses subagent edits (RISK-SUBAGENT-GAP), CI is the only
+          place the gate is guaranteed to run over every change.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-CI-PARITY">
+            <given>A pull request or main-branch push</given>
+            <when>CI runs</when>
+            <then>It fails if tests, rqml check, or strict rqml check fail.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-INSTALL-SMOKE" type="NFR" title="Installed-plugin smoke test" status="approved" priority="must">
+        <statement>
+          The automated test suite SHALL include a deterministic smoke test that
+          loads the plugin in its installed npm-package layout, exercises the
+          hooks against fixture projects, and verifies that the config hook's
+          contributions (MCP server, commands, instructions) actually take
+          effect, without requiring a live opencode host install.
+        </statement>
+        <rationale>
+          Unit tests that call hook functions directly do not prove the package
+          export shape, the config-hook registration, and the installed layout
+          work together; a deterministic smoke covers the contract the repo
+          controls.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-INSTALL-SMOKE">
+            <given>The plugin loaded from its built package layout with fixture projects</given>
+            <when>The smoke test runs the hooks and the config hook</when>
+            <then>Hooks behave per spec and the config contributions appear in the resolved configuration.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-NO-RESIDUE" type="NFR" title="Clean uninstall" status="approved" priority="should">
+        <statement>
+          Removing the plugin from opencode.json's plugin array SHALL leave the
+          project untouched: the config-hook contributions are in-memory and
+          disappear with the plugin, and the plugin SHALL write no files outside
+          its own package and opencode's plugin cache, except those the
+          developer explicitly created via the init surface.
+        </statement>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-HOOKS" title="Enforcement hooks" ownerRef="STK-TEAMS">
+      <description>
+        Anchor on the spec, validate spec edits in-turn, hard-deny edits for
+        unapproved requirements, and run an honest advisory check at idle.
+      </description>
+      <req id="REQ-HOOK-ANCHOR" type="FR" title="Session anchoring" status="approved" priority="must">
+        <statement>
+          In an RQML-governed project, the plugin SHALL inject a freshly computed
+          rqml status summary into the model's context via
+          experimental.chat.system.transform when available, falling back to a
+          chat.message text part and then to a static instructions file. The
+          injected anchor SHALL include the spec docId, coverage summary, a
+          compact statement of the five-stage process (Spec, Design (ADRs),
+          Plan, Code, Verify), and an honest note that turn-end checking is
+          advisory and CI is authoritative.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-ANCHOR">
+            <given>A project with a valid requirements.rqml</given>
+            <when>The first model request of a session is built</when>
+            <then>The model's context contains the spec docId, coverage summary, the loop reminder, and the advisory-enforcement note.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-HOOK-SPEC-VALIDATE" type="FR" title="Immediate spec-edit validation" status="approved" priority="must">
+        <statement>
+          After an edit or write tool call whose target is an .rqml document,
+          the plugin's tool.execute.after hook SHALL run rqml validate on the
+          touched document and, when validation fails, surface the diagnostics
+          by mutating the tool result so they reach the agent in the same turn.
+        </statement>
+        <notes>
+          tool.execute.after cannot undo a completed edit; surfacing here means
+          the agent repairs the document immediately rather than persisting an
+          invalid spec state unnoticed.
+        </notes>
+        <acceptance>
+          <criterion id="CRIT-SPEC-EDIT">
+            <given>An agent edit that introduces a duplicate id into the spec</given>
+            <when>The edit completes</when>
+            <then>The duplicate-id diagnostic reaches the agent in the same turn.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-HOOK-PREIMPL" type="FR" title="Pre-implementation approval gate" status="approved" priority="must">
+        <statement>
+          The plugin's tool.execute.before hook SHALL, before an edit or write
+          to a code artifact already linked by an implements edge to a
+          requirement, consult the toolchain's approval-gate verdict and throw
+          to deny the call when that requirement is not approved, naming the
+          requirement and the reproducing command. On any CLI error or missing
+          toolchain the hook SHALL NOT throw (fail open). Net-new, not-yet-linked
+          code remains governed by the idle check and CI.
+        </statement>
+        <rationale>
+          opencode's awaited, throwing tool.execute.before is the one hard,
+          synchronous, deterministic in-session lever the host offers, and it is
+          earlier than the siblings' optional PreToolUse checkpoint
+          (DEC-PRE-TOOL-GATE-CENTRAL). The verdict is the toolchain's, not the
+          model's.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-PREIMPL-DENY">
+            <given>An agent edit to code linked by an implements edge to a draft requirement</given>
+            <when>The tool.execute.before hook runs</when>
+            <then>The edit is denied with a message naming the requirement; and when the toolchain is unavailable the edit proceeds with at most one warning.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-PREIMPL-COVERAGE-DISCLOSURE" type="OR" title="Disclose the pre-edit coverage boundary" status="approved" priority="should">
+        <statement>
+          The plugin SHALL disclose — in the anchor, the status surface, and the
+          documentation — that the pre-edit gate does not intercept edits made
+          by subagents spawned through the task tool, and that CI is the backstop
+          for that path, so the gate's coverage is never oversold.
+        </statement>
+        <rationale>
+          tool.execute.before does not fire for a subagent's internal tool calls
+          (sst/opencode #5894, RISK-SUBAGENT-GAP); silence about that boundary
+          would be a false assurance (BR-NO-FALSE-ASSURANCE).
+        </rationale>
+      </req>
+      <req id="REQ-TURN-END-CHECK" type="FR" title="Advisory turn-end check" status="approved" priority="must">
+        <statement>
+          When a session goes idle in an RQML-governed project, the plugin SHALL
+          run rqml check at the project's strictness and, on a non-zero exit,
+          surface the diagnostics as a toast and — in long-lived interactive
+          (TUI or server) sessions only — an optional soft continuation prompt
+          via the SDK client. The check SHALL NOT block the turn and SHALL NOT be
+          described as a hard gate; the surfaced message SHALL state that CI
+          enforces the same verdict.
+        </statement>
+        <rationale>
+          opencode cannot block turn end (CON-NO-STOP-GATE, DEC-SOFT-TURN-END);
+          this is the honest in-session safety net, not the authoritative gate.
+        </rationale>
+        <notes>
+          Loop protection: the soft continuation SHALL be idempotent per idle
+          transition and SHALL not re-prompt for a verdict it has already
+          surfaced unchanged, so it cannot spam the session; in non-interactive
+          `opencode run` the soft prompt SHALL be skipped because its delivery
+          races process teardown.
+        </notes>
+        <acceptance>
+          <criterion id="CRIT-IDLE-FLAGS">
+            <given>A project whose linked implementation has drifted</given>
+            <when>The session goes idle</when>
+            <then>The changed-implementation diagnostic is surfaced and the turn is not blocked.</then>
+          </criterion>
+          <criterion id="CRIT-IDLE-QUIET">
+            <given>A project where rqml check exits zero</given>
+            <when>The session goes idle</when>
+            <then>Nothing is surfaced.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-HOOK-WORKSPACE" type="FR" title="Workspace fan-out" status="approved" priority="should">
+        <statement>
+          When no spec governs the working directory but package specs exist
+          beneath it (a workspace root), the plugin SHALL NOT go dormant: the
+          anchor SHALL list the discovered units and how to gate them, and the
+          idle check SHALL run the workspace check (rqml check --workspace) and
+          surface its aggregate diagnostics advisorily. Discovery SHALL be
+          delegated to the CLI, never reimplemented in the hook; when the CLI is
+          unavailable the plugin SHALL stay silent, since a workspace cannot be
+          distinguished from an ungoverned directory without it.
+        </statement>
+        <rationale>
+          A monorepo root holding package specs is governed, just not by a single
+          spec; treating it as dormant (REQ-DORMANT) would leave repo-wide
+          sessions unanchored (GOAL-ENFORCED-LOOP). The per-edit gate stays
+          unit-scoped and defers to this idle fan-out at a bare root.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-WORKSPACE-ANCHOR">
+            <given>A directory with no spec of its own but package specs beneath it</given>
+            <when>A session is anchored</when>
+            <then>The injected context lists the package specs and points to rqml check --workspace, rather than staying dormant.</then>
+          </criterion>
+          <criterion id="CRIT-WORKSPACE-IDLE">
+            <given>A workspace root where one package spec fails its check</given>
+            <when>The session goes idle</when>
+            <then>The aggregated workspace diagnostics are surfaced advisorily.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-HOOK-DIAGNOSTICS" type="UXR" title="Verbatim, reproducible diagnostics" status="approved" priority="must">
+        <statement>
+          Every denial, validation feedback, and flagged check SHALL include the
+          CLI diagnostics verbatim and the exact command that reproduces them,
+          through whichever channel carries it (the tool result, a toast, or a
+          soft prompt).
+        </statement>
+      </req>
+      <req id="REQ-HOOK-FAIL-OPEN" type="NFR" title="Fail open" status="approved" priority="must">
+        <statement>
+          When the rqml CLI is missing or exits with a usage error (64), the
+          plugin SHALL NOT deny any edit and SHALL NOT crash a session; it SHALL
+          warn at most once per session, including the toolchain install command.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-FAIL-OPEN">
+            <given>A project with a spec but no rqml CLI on the PATH</given>
+            <when>The agent edits and the session goes idle</when>
+            <then>Nothing is denied and exactly one warning is shown.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-ENFORCEMENT-HONESTY" type="OR" title="Honest enforcement posture" status="approved" priority="must">
+        <statement>
+          The plugin SHALL state, at the anchor and in the status surface and the
+          documentation, the truth about in-session enforcement on opencode: a
+          hard pre-edit gate for code linked to unapproved requirements, an
+          advisory turn-end check, the subagent coverage boundary, and CI as the
+          authoritative gate. It SHALL NOT represent the turn-end check as a hard
+          block.
+        </statement>
+        <rationale>
+          On a host that cannot block turn end (CON-NO-STOP-GATE), conflating
+          "installed" with "hard-enforcing" is the most dangerous failure mode
+          (RISK-FALSE-ASSURANCE, BR-NO-FALSE-ASSURANCE); this promotes the Codex
+          honest-status requirement to a central, non-optional concern.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-HONEST">
+            <given>An RQML-governed project with the plugin active</given>
+            <when>The developer or agent reads the anchor or invokes the status surface</when>
+            <then>The output states that turn-end checking is advisory, that the pre-edit gate is the hard in-session lever, and that CI is authoritative.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-EXPERIMENTAL-API-RISK" type="NFR" title="Feature-detected host capabilities" status="approved" priority="must">
+        <statement>
+          Every reliance on a semi-internal or experimental opencode capability
+          — the config hook for registration and
+          experimental.chat.system.transform for the dynamic anchor — SHALL be
+          feature-detected at load, SHALL degrade to a documented manual
+          fallback when absent, and SHALL never throw or crash a session if the
+          capability's shape changes.
+        </statement>
+        <rationale>
+          These capabilities are not in the public docs or are experimental
+          (CON-SEMI-INTERNAL-API, RISK-API-DRIFT); building on them is worthwhile
+          only if their absence degrades the plugin rather than breaking it.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-API-ABSENT">
+            <given>A host build where the config hook or the system-transform is unavailable</given>
+            <when>The plugin loads</when>
+            <then>It falls back to the documented manual path, surfaces a one-time note, and runs without crashing.</then>
+          </criterion>
+        </acceptance>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-COMMANDS" title="Command surfaces" ownerRef="STK-TEAMS">
+      <description>
+        Explicit entry points for the developer and the agent, delivered through
+        the channels opencode supports (DEC-COMMAND-SURFACES).
+      </description>
+      <req id="REQ-COMMAND-SURFACES" type="DR" title="Resilient command delivery" status="approved" priority="must">
+        <statement>
+          The command surfaces SHALL be delivered as JSON commands contributed
+          through the config hook and additionally as plugin-registered tools
+          and @rqml/mcp tools, so each surface works regardless of which
+          registration paths a given opencode host supports. The on-disk
+          .opencode/command/ markdown form SHALL be documented as a manual
+          alternative.
+        </statement>
+        <rationale>
+          opencode offers no plugin-distributable command bundle; multiple
+          delivery channels keep the surfaces available where any one path is
+          unsupported.
+        </rationale>
+      </req>
+      <req id="REQ-CMD-INIT" type="FR" title="init — adopt RQML" status="approved" priority="must">
+        <statement>
+          The plugin SHALL provide an init surface that scaffolds an RQML-
+          governed project via rqml init, guides the agent through eliciting and
+          drafting the project's first real requirements from the developer, and
+          guides the developer through adding the plugin to opencode.json so the
+          hooks are active.
+        </statement>
+      </req>
+      <req id="REQ-CMD-STATUS" type="FR" title="status — re-anchor" status="approved" priority="must">
+        <statement>
+          The plugin SHALL provide a status surface that re-runs the anchoring on
+          demand and reports the honest enforcement posture per
+          REQ-ENFORCEMENT-HONESTY.
+        </statement>
+      </req>
+      <req id="REQ-CMD-CHECK" type="FR" title="check — run the gate" status="approved" priority="must">
+        <statement>
+          The plugin SHALL provide a check surface that runs the gate on demand
+          and has the agent resolve each finding through the loop (show,
+          implement or link, re-check) until it passes.
+        </statement>
+      </req>
+      <req id="REQ-CMD-DESIGN" type="FR" title="design — record an ADR" status="approved" priority="should">
+        <statement>
+          The plugin SHALL provide a design surface that runs the Design stage:
+          it classifies a decision and, when the decision is ADR-worthy, writes
+          an Architecture Decision Record to .rqml/adr/ following the canonical
+          format (NNNN-slug.md, immutable once accepted), without implementing
+          the decision.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-CMD-DESIGN">
+            <given>A significant design decision handled via the design surface</given>
+            <when>The agent concludes it is ADR-worthy</when>
+            <then>An ADR file is written to .rqml/adr/ using the canonical naming and template.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-CMD-PLAN" type="FR" title="plan — draft the plan" status="approved" priority="should">
+        <statement>
+          The plugin SHALL provide a plan surface that runs the Plan stage: it
+          assesses readiness and creates or updates a staged implementation plan
+          at .rqml/plan.md, framed for coding agents, without implementing it.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-CMD-PLAN">
+            <given>A project with approved requirements</given>
+            <when>The developer invokes the plan surface</when>
+            <then>.rqml/plan.md is created or updated with per-stage goals, requirement ids, and verification steps.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-CMD-REVIEW" type="FR" title="review — accept requirements" status="approved" priority="should">
+        <statement>
+          The plugin SHALL provide a review surface that renders the draft and
+          review requirements as an overview and a traceability matrix, presents
+          them to the developer for acceptance, and on confirmation transitions
+          each accepted requirement to approved via the toolchain's approve
+          operation.
+        </statement>
+        <rationale>
+          Adoption gates on the developer approving requirements (REQ-CMD-INIT);
+          a review surface makes acceptance an explicit, repeatable checkpoint
+          using the toolchain's deterministic surfaces (overview, matrix,
+          approve) rather than manual XML edits. The human decides; the toolchain
+          performs the edit.
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-REVIEW-ACCEPT">
+            <given>A project with draft requirements</given>
+            <when>The developer invokes the review surface and confirms a requirement</when>
+            <then>That requirement's status becomes approved and the others are unchanged.</then>
+          </criterion>
+        </acceptance>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-AGENT-TOOLS" title="Agent tooling" ownerRef="STK-MAINTAINER">
+      <description>The read/record loop exposed to the agent as structured tools, and how it is registered.</description>
+      <req id="REQ-MCP-BUNDLED" type="FR" title="Bundled MCP server" status="approved" priority="must">
+        <statement>
+          The plugin SHALL register the @rqml/mcp server so the agent has the
+          toolchain's tools (validate, status, check, trace, show, impact,
+          skeleton, link) in every session, launched via npx with no separate
+          installation step. Registration SHALL be performed through the config
+          hook, with a documented opencode.json mcp entry as the manual fallback.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-MCP-TOOLS">
+            <given>A session with the plugin installed</given>
+            <when>The agent lists its tools</when>
+            <then>The rqml_* tools are available.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-CONFIG-HOOK-REGISTER" type="IR" title="Zero-touch registration via the config hook" status="approved" priority="should">
+        <statement>
+          The plugin SHALL contribute the MCP server, the command surfaces, and
+          the vendored instruction files by in-place mutation of the resolved
+          configuration in the config hook, SHALL feature-detect the hook, and
+          SHALL fall back to documented manual configuration for each
+          contribution when the hook is unavailable or the configuration shape
+          is unexpected.
+        </statement>
+        <rationale>
+          Programmatic registration is what makes installation a single plugin
+          entry (GOAL-ZERO-CONFIG), but the hook is semi-internal
+          (CON-SEMI-INTERNAL-API), so it must degrade rather than fail
+          (REQ-EXPERIMENTAL-API-RISK).
+        </rationale>
+        <acceptance>
+          <criterion id="CRIT-CONFIG-REGISTER">
+            <given>A host that honors the config hook</given>
+            <when>The plugin loads in a governed project</when>
+            <then>The resolved configuration contains the rqml MCP server, the command surfaces, and the instruction files, with no manual opencode.json edits.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-PATH-DISCIPLINE" type="PR" title="Path inputs over inline XML" status="approved" priority="should">
+        <statement>
+          Plugin guidance (the anchor, the command surfaces, the craft) SHALL
+          direct the agent to call MCP tools and the CLI with path inputs rather
+          than inlining documents, and to record trace links with rqml link or
+          rqml_link rather than hand-editing trace XML.
+        </statement>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-CRAFT" title="Authoring craft" ownerRef="STK-MAINTAINER">
+      <description>The vendored authoring craft and its drift guard.</description>
+      <req id="REQ-SKILL-AUTHORING" type="FR" title="Vendored authoring craft" status="approved" priority="should">
+        <statement>
+          The plugin SHOULD bundle the authoring craft as a vendored copy of
+          rqml-skill's canonical references (authoring.md and monorepo.md),
+          contribute them as instruction files through the config hook (or a
+          documented manual instructions entry), and add only activation
+          pointers of its own, so the plugin re-expresses no authoring guidance
+          and every structural question is delegated to the toolchain.
+        </statement>
+      </req>
+      <req id="REQ-CRAFT-GUARD" type="NFR" title="Vendored craft drift guard" status="approved" priority="should">
+        <statement>
+          A continuous-integration check SHALL fail when a vendored reference
+          (the bundled authoring.md or monorepo.md) diverges from its canonical
+          source in rqml-skill, so a bundled copy cannot silently drift between
+          syncs or be edited locally; when the canonical source is unreachable
+          the check SHALL be skipped rather than fail spuriously.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-CRAFT-GUARD">
+            <given>A vendored reference edited to differ from its canonical rqml-skill source</given>
+            <when>CI runs</when>
+            <then>The drift check fails and names the divergence; and when the canonical source is unreachable the check is skipped.</then>
+          </criterion>
+        </acceptance>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-CONFIG" title="Configuration and contracts" ownerRef="STK-MAINTAINER">
+      <description>How the plugin stays aligned with the project and the toolchain.</description>
+      <req id="REQ-STRICTNESS-RESPECT" type="PR" title="Respect declared strictness" status="approved" priority="must">
+        <statement>
+          The plugin SHALL run every gate at the strictness level the project
+          declares (the AGENTS.md strictness convention, which opencode loads
+          natively by walking parent directories), defaulting to standard when
+          none is declared.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-STRICTNESS">
+            <given>A project whose AGENTS.md declares strictness strict</given>
+            <when>The idle check runs</when>
+            <then>rqml check is invoked with strictness strict.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-CLI-CONTRACT" type="IR" title="Consume only the stable contract" status="approved" priority="must">
+        <statement>
+          The plugin SHALL consume only the documented CLI contract — exit codes
+          0, 1, 2, and 64, and the JSON report shapes of status and check — and
+          SHALL declare the toolchain version range it is compatible with.
+        </statement>
+      </req>
+    </reqPackage>
+
+    <reqPackage id="PKG-DOCS" title="Adoption documentation" ownerRef="STK-TEAMS">
+      <description>
+        Human-facing documentation that explains why RQML matters for opencode
+        work, how to adopt the plugin, and what the install honestly promises.
+      </description>
+      <req id="REQ-DOCS-CONVERSION" type="UXR" title="Explain RQML purpose and plugin value" status="approved" priority="should">
+        <statement>
+          The repository documentation SHALL explain the purpose and promise of
+          RQML for LLM-assisted development: explicit requirements as the durable
+          artifact, structured context for agents, traceability to code and
+          tests, and deterministic drift gates with no model in the verdict path.
+          It SHALL connect that promise to the opencode plugin's concrete
+          behavior.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-DOCS-CONVERSION">
+            <given>A developer evaluating the plugin from the repository README</given>
+            <when>They read the introductory and linked concept documentation</when>
+            <then>They understand what RQML is, why it matters for opencode work, and what the plugin does for them.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-DOCS-ONBOARDING" type="UXR" title="First-green-check onboarding" status="approved" priority="must">
+        <statement>
+          The repository documentation SHALL provide a clear path from
+          installation to the first passing RQML gate, including adoption in an
+          existing repository, adding the plugin to opencode.json, the strictness
+          convention in AGENTS.md, requirement-backed implementation, trace
+          linking, verification, and common troubleshooting states.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-DOCS-ONBOARDING">
+            <given>A developer with opencode and Node.js available</given>
+            <when>They follow the quickstart</when>
+            <then>They can initialize or adopt RQML, install the plugin, and finish with rqml check passing.</then>
+          </criterion>
+        </acceptance>
+      </req>
+      <req id="REQ-DOCS-SURFACES" type="UXR" title="Honest surface documentation" status="approved" priority="should">
+        <statement>
+          The documentation SHALL describe the plugin's enforcement honestly: a
+          hard pre-edit gate for linked code, an advisory turn-end check, the
+          subagent coverage boundary, CI as the authoritative gate, and which
+          contributions are registered programmatically versus added manually.
+          It SHALL NOT overstate the in-session guarantees.
+        </statement>
+        <acceptance>
+          <criterion id="CRIT-DOCS-SURFACES">
+            <given>The README and concept docs are inspected</given>
+            <when>The enforcement description is read</when>
+            <then>It names the pre-edit gate as the hard in-session lever, the turn-end check as advisory, and CI as authoritative.</then>
+          </criterion>
+        </acceptance>
+      </req>
+    </reqPackage>
+
+  </requirements>
+
+  <!-- ============================================================= -->
+  <!-- BEHAVIOR                                                      -->
+  <!-- ============================================================= -->
+  <behavior>
+    <stateMachine id="SM-SESSION" name="Enforcement Session" entityRef="ENT-PLUGIN" initial="ST-DORMANT">
+      <description>
+        The plugin's posture over one opencode session. Unlike the siblings,
+        there is no blocked-at-stop state: the hard block is at the edit
+        boundary, and the turn-end check is advisory.
+      </description>
+      <state id="ST-DORMANT" name="Dormant" type="initial">
+        <description>No .rqml document detected; the plugin does nothing.</description>
+        <invariant>Zero injected context, zero denials, one discovery test per event.</invariant>
+      </state>
+      <state id="ST-ANCHORED" name="Anchored">
+        <description>Spec detected and status injected; the pre-edit gate and idle check are active.</description>
+      </state>
+      <state id="ST-EDIT-DENIED" name="Edit denied">
+        <description>The pre-edit gate threw on an edit to code for an unapproved requirement; the edit did not run.</description>
+        <invariant>The denying diagnostics, naming the requirement, are returned to the agent.</invariant>
+      </state>
+      <state id="ST-FLAGGED" name="Flagged">
+        <description>The idle check failed; diagnostics surfaced advisorily; the turn is not blocked.</description>
+        <invariant>The plugin never claims the turn was blocked.</invariant>
+      </state>
+      <state id="ST-CLEAN" name="Clean" type="final">
+        <description>The session ended (advisory check passed, was surfaced, or the project was dormant).</description>
+      </state>
+      <transition id="TR-DETECT" from="ST-DORMANT" to="ST-ANCHORED" event="spec-detected">
+        <description>A hook finds an enclosing .rqml document and anchors the agent.</description>
+      </transition>
+      <transition id="TR-EDIT-DENY" from="ST-ANCHORED" to="ST-EDIT-DENIED" event="edit-rejected">
+        <description>tool.execute.before consulted the approval gate and threw.</description>
+        <guard>The edit targets code linked by an implements edge to a non-approved requirement, and the CLI verdict is available.</guard>
+        <action>Throw to abort the tool call and return the naming diagnostics.</action>
+      </transition>
+      <transition id="TR-EDIT-RESOLVE" from="ST-EDIT-DENIED" to="ST-ANCHORED" event="approval-obtained">
+        <description>The requirement is approved or waived; work continues.</description>
+      </transition>
+      <transition id="TR-IDLE-FAIL" from="ST-ANCHORED" to="ST-FLAGGED" event="idle-check-failed">
+        <description>The session went idle; rqml check exited non-zero.</description>
+        <guard>Exit code is 1 or 2.</guard>
+        <action>Surface diagnostics via toast and, in interactive mode, an optional soft continuation; do not block.</action>
+      </transition>
+      <transition id="TR-FLAGGED-CONTINUE" from="ST-FLAGGED" to="ST-ANCHORED" event="findings-addressed">
+        <description>The agent fixes, links, or specifies in response to the advisory; work continues.</description>
+      </transition>
+      <transition id="TR-IDLE-PASS" from="ST-ANCHORED" to="ST-CLEAN" event="idle-check-passed">
+        <description>rqml check exits zero at idle; the session ends quietly.</description>
+      </transition>
+      <transition id="TR-FLAGGED-END" from="ST-FLAGGED" to="ST-CLEAN" event="session-end">
+        <description>The session ends with the advisory unresolved; CI remains the authoritative gate.</description>
+      </transition>
+      <transition id="TR-DORMANT-END" from="ST-DORMANT" to="ST-CLEAN" event="session-end">
+        <description>A non-RQML session ends untouched.</description>
+      </transition>
+    </stateMachine>
+  </behavior>
+
+  <!-- ============================================================= -->
+  <!-- VERIFICATION                                                  -->
+  <!-- ============================================================= -->
+  <verification>
+    <testSuite id="TS-PLUGIN" title="Plugin behavior suite">
+      <description>
+        Exercises the hooks, the config-hook registration, and the command
+        surfaces against fixture projects (governed, ungoverned, drifted,
+        toolchain-missing, host-API-absent).
+      </description>
+    </testSuite>
+    <testCase id="TC-MANIFEST" type="inspection" title="Plugin loads">
+      <purpose>Verify REQ-MANIFEST and REQ-PLUGIN-FACTORY.</purpose>
+      <steps>Load the built package as an opencode plugin and inspect the returned hooks.</steps>
+      <expected>The factory constructs without error and returns the documented hooks.</expected>
+    </testCase>
+    <testCase id="TC-ANCHOR" type="integration" title="Session anchoring">
+      <purpose>Verify REQ-HOOK-ANCHOR.</purpose>
+      <steps>Build the first request in a fixture project with a valid spec.</steps>
+      <expected>The injected context contains docId, coverage counts, the loop reminder, and the advisory-enforcement note.</expected>
+    </testCase>
+    <testCase id="TC-SPEC-EDIT" type="integration" title="Spec edits validated in-turn">
+      <purpose>Verify REQ-HOOK-SPEC-VALIDATE.</purpose>
+      <steps>Have the agent introduce a duplicate id; observe the same turn.</steps>
+      <expected>The duplicate-id diagnostic is returned as tool feedback.</expected>
+    </testCase>
+    <testCase id="TC-PREIMPL-DENY" type="acceptance" title="Pre-edit gate denies unapproved edits">
+      <purpose>Verify REQ-HOOK-PREIMPL (deny path).</purpose>
+      <steps>Edit code linked by an implements edge to a draft requirement.</steps>
+      <expected>tool.execute.before throws; the edit does not run; the requirement is named.</expected>
+    </testCase>
+    <testCase id="TC-PREIMPL-FAILOPEN" type="integration" title="Pre-edit gate fails open">
+      <purpose>Verify REQ-HOOK-PREIMPL (fail-open path) and BR-NEVER-BRICK.</purpose>
+      <steps>Remove the rqml CLI and edit linked code.</steps>
+      <expected>The edit proceeds; the hook does not throw; one warning is shown.</expected>
+    </testCase>
+    <testCase id="TC-SUBAGENT-GAP" type="inspection" title="Subagent coverage boundary disclosed">
+      <purpose>Verify REQ-PREIMPL-COVERAGE-DISCLOSURE.</purpose>
+      <steps>Inspect the anchor, status surface, and docs.</steps>
+      <expected>All three disclose that subagent edits are not intercepted and that CI is the backstop.</expected>
+    </testCase>
+    <testCase id="TC-IDLE-ADVISORY" type="acceptance" title="Idle check flags without blocking">
+      <purpose>Verify REQ-TURN-END-CHECK and BR-NO-FALSE-ASSURANCE.</purpose>
+      <steps>Drift a linked artifact in a fixture project and trigger idle.</steps>
+      <expected>The drift diagnostic is surfaced; the turn is not blocked; the message names CI as authoritative.</expected>
+    </testCase>
+    <testCase id="TC-IDLE-QUIET" type="integration" title="Idle check is quiet on pass">
+      <purpose>Verify REQ-TURN-END-CHECK (clean path).</purpose>
+      <steps>Trigger idle in a fixture where rqml check exits zero.</steps>
+      <expected>Nothing is surfaced.</expected>
+    </testCase>
+    <testCase id="TC-DORMANT" type="integration" title="Dormant in ungoverned projects">
+      <purpose>Verify REQ-DORMANT.</purpose>
+      <steps>Run a full session in a project without an .rqml document.</steps>
+      <expected>No injected context, no denials, no warnings.</expected>
+    </testCase>
+    <testCase id="TC-FAIL-OPEN" type="integration" title="Missing toolchain fails open">
+      <purpose>Verify REQ-HOOK-FAIL-OPEN.</purpose>
+      <steps>Remove the rqml CLI from PATH in a governed fixture; work and go idle.</steps>
+      <expected>One warning, zero denials, no crash.</expected>
+    </testCase>
+    <testCase id="TC-PARITY" type="integration" title="Hook verdict equals CLI verdict">
+      <purpose>Verify GOAL-PARITY via REQ-THIN-ADAPTER.</purpose>
+      <steps>Run the idle-check hook and a bare rqml check on the same fixture.</steps>
+      <expected>Identical verdicts and diagnostics.</expected>
+    </testCase>
+    <testCase id="TC-CONFIG-REGISTER" type="integration" title="Config hook registers contributions">
+      <purpose>Verify REQ-CONFIG-HOOK-REGISTER and REQ-MCP-BUNDLED.</purpose>
+      <steps>Run the config hook against a fixture configuration object.</steps>
+      <expected>The resolved configuration gains the rqml MCP server, the command surfaces, and the instruction files.</expected>
+    </testCase>
+    <testCase id="TC-API-ABSENT" type="integration" title="Absent host API degrades gracefully">
+      <purpose>Verify REQ-EXPERIMENTAL-API-RISK.</purpose>
+      <steps>Simulate a host without the config hook and without the system-transform.</steps>
+      <expected>The plugin falls back to manual paths, surfaces a one-time note, and does not crash.</expected>
+    </testCase>
+    <testCase id="TC-WORKSPACE" type="integration" title="Workspace fan-out at a spec-less root">
+      <purpose>Verify REQ-HOOK-WORKSPACE.</purpose>
+      <steps>Anchor and go idle at a directory with no spec of its own but package specs beneath it.</steps>
+      <expected>The anchor lists the units and points to rqml check --workspace; the idle check surfaces aggregated workspace diagnostics advisorily.</expected>
+    </testCase>
+    <testCase id="TC-DOCS" type="inspection" title="Documentation coverage and honesty">
+      <purpose>Verify REQ-DOCS-CONVERSION, REQ-DOCS-ONBOARDING, and REQ-DOCS-SURFACES.</purpose>
+      <steps>Inspect the README and linked docs and the documentation validation test.</steps>
+      <expected>The docs explain RQML and the opencode plugin, give a first-green-check path, and describe enforcement honestly (pre-edit hard, turn-end advisory, CI authoritative).</expected>
+    </testCase>
+  </verification>
+
+  <!-- ============================================================= -->
+  <!-- TRACE                                                         -->
+  <!-- ============================================================= -->
+  <trace>
+    <!-- Requirements satisfy goals -->
+    <edge id="E-ANCHOR-LOOP" type="satisfies" confidence="0.85">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-LOOP" type="satisfies" confidence="0.9">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-SPECEDIT-LOOP" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-HOOK-SPEC-VALIDATE"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-WORKSPACE-LOOP" type="satisfies" confidence="0.75">
+      <from><locator><local id="REQ-HOOK-WORKSPACE"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-CI-PARITY" type="satisfies" confidence="0.9">
+      <from><locator><local id="REQ-CI-PARITY"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-THIN-PARITY" type="satisfies" confidence="0.95">
+      <from><locator><local id="REQ-THIN-ADAPTER"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-CONTRACT-PARITY" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-CLI-CONTRACT"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-STRICT-PARITY" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-STRICTNESS-RESPECT"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-HONEST-POSTURE" type="satisfies" confidence="0.95">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><local id="GOAL-HONEST-POSTURE"/></locator></to>
+    </edge>
+    <edge id="E-DISCLOSE-POSTURE" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></from>
+      <to><locator><local id="GOAL-HONEST-POSTURE"/></locator></to>
+    </edge>
+    <edge id="E-DOCS-SURFACES-POSTURE" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-DOCS-SURFACES"/></locator></from>
+      <to><locator><local id="GOAL-HONEST-POSTURE"/></locator></to>
+    </edge>
+    <edge id="E-DORMANT-ZERO" type="satisfies" confidence="0.9">
+      <from><locator><local id="REQ-DORMANT"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-MANIFEST-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-MANIFEST"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-CONFIGREG-ZERO" type="satisfies" confidence="0.85">
+      <from><locator><local id="REQ-CONFIG-HOOK-REGISTER"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-MCP-ZERO" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-MCP-BUNDLED"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-DORMANT-LATENCY-Q" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-DORMANT"/></locator></from>
+      <to><locator><local id="QGOAL-LATENCY"/></locator></to>
+    </edge>
+    <edge id="E-DIAG-SIGNAL" type="satisfies" confidence="0.9">
+      <from><locator><local id="REQ-HOOK-DIAGNOSTICS"/></locator></from>
+      <to><locator><local id="QGOAL-SIGNAL"/></locator></to>
+    </edge>
+    <edge id="E-FAILOPEN-SIGNAL" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
+      <to><locator><local id="QGOAL-SIGNAL"/></locator></to>
+    </edge>
+    <edge id="E-CMD-INIT-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CMD-INIT"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-CMD-STATUS-HONEST" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CMD-STATUS"/></locator></from>
+      <to><locator><local id="GOAL-HONEST-POSTURE"/></locator></to>
+    </edge>
+    <edge id="E-CMD-CHECK-LOOP" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-CMD-CHECK"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-COMMAND-SURFACES-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-COMMAND-SURFACES"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-DISTRIBUTION-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-DISTRIBUTION"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-DISCOVERY-PARITY" type="satisfies" confidence="0.9">
+      <from><locator><local id="REQ-DISCOVERY"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-RESIDUE-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-NO-RESIDUE"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+
+    <!-- Remaining requirements satisfy goals (no orphans) -->
+    <edge id="E-FACTORY-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-PLUGIN-FACTORY"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-INSTALL-PARITY" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-INSTALL-SMOKE"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-APIRISK-ZERO" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+    <edge id="E-PATH-LOOP" type="satisfies" confidence="0.6">
+      <from><locator><local id="REQ-PATH-DISCIPLINE"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-SKILL-LOOP" type="satisfies" confidence="0.6">
+      <from><locator><local id="REQ-SKILL-AUTHORING"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-GUARD-PARITY" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CRAFT-GUARD"/></locator></from>
+      <to><locator><local id="GOAL-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-CMD-DESIGN-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CMD-DESIGN"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-CMD-PLAN-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CMD-PLAN"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-CMD-REVIEW-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-CMD-REVIEW"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-DOCS-CONVERSION-LOOP" type="satisfies" confidence="0.7">
+      <from><locator><local id="REQ-DOCS-CONVERSION"/></locator></from>
+      <to><locator><local id="GOAL-ENFORCED-LOOP"/></locator></to>
+    </edge>
+    <edge id="E-DOCS-ONBOARDING-ZERO" type="satisfies" confidence="0.8">
+      <from><locator><local id="REQ-DOCS-ONBOARDING"/></locator></from>
+      <to><locator><local id="GOAL-ZERO-CONFIG"/></locator></to>
+    </edge>
+
+    <!-- Requirements depend on decisions -->
+    <edge id="E-MANIFEST-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-MANIFEST"/></locator></from>
+      <to><locator><local id="DEC-PLUGIN-PROGRAMMATIC"/></locator></to>
+    </edge>
+    <edge id="E-FACTORY-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-PLUGIN-FACTORY"/></locator></from>
+      <to><locator><local id="DEC-PLUGIN-PROGRAMMATIC"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="DEC-PRE-TOOL-GATE-CENTRAL"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><local id="DEC-SOFT-TURN-END"/></locator></to>
+    </edge>
+    <edge id="E-HONEST-DEC" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><local id="DEC-SOFT-TURN-END"/></locator></to>
+    </edge>
+    <edge id="E-ANCHOR-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><local id="DEC-CONTEXT-INJECTION"/></locator></to>
+    </edge>
+    <edge id="E-CONFIGREG-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-CONFIG-HOOK-REGISTER"/></locator></from>
+      <to><locator><local id="DEC-CONFIG-HOOK-REGISTER"/></locator></to>
+    </edge>
+    <edge id="E-COMMAND-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-COMMAND-SURFACES"/></locator></from>
+      <to><locator><local id="DEC-COMMAND-SURFACES"/></locator></to>
+    </edge>
+    <edge id="E-MCP-DEC" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-MCP-BUNDLED"/></locator></from>
+      <to><locator><local id="DEC-CLI-FOR-VERDICTS"/></locator></to>
+    </edge>
+    <edge id="E-DISTRIBUTION-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-DISTRIBUTION"/></locator></from>
+      <to><locator><local id="DEC-DISTRIBUTION-NPM"/></locator></to>
+    </edge>
+    <edge id="E-THIN-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-THIN-ADAPTER"/></locator></from>
+      <to><locator><local id="DEC-THIN-ADAPTER"/></locator></to>
+    </edge>
+    <edge id="E-FAILOPEN-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
+      <to><locator><local id="DEC-FAIL-OPEN"/></locator></to>
+    </edge>
+    <edge id="E-APIRISK-DEC" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><local id="DEC-CONFIG-HOOK-REGISTER"/></locator></to>
+    </edge>
+    <edge id="E-CRAFT-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-SKILL-AUTHORING"/></locator></from>
+      <to><locator><local id="DEC-VENDOR-CRAFT"/></locator></to>
+    </edge>
+    <edge id="E-GUARD-DEC" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-CRAFT-GUARD"/></locator></from>
+      <to><locator><local id="DEC-VENDOR-CRAFT"/></locator></to>
+    </edge>
+
+    <!-- Requirements mitigate risks and obstacles -->
+    <edge id="E-HONEST-FALSEASSURE" type="mitigates" confidence="0.9">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><local id="RISK-FALSE-ASSURANCE"/></locator></to>
+    </edge>
+    <edge id="E-DISCLOSE-SUBAGENT" type="mitigates" confidence="0.85">
+      <from><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></from>
+      <to><locator><local id="RISK-SUBAGENT-GAP"/></locator></to>
+    </edge>
+    <edge id="E-CI-SUBAGENT" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-CI-PARITY"/></locator></from>
+      <to><locator><local id="RISK-SUBAGENT-GAP"/></locator></to>
+    </edge>
+    <edge id="E-APIRISK-DRIFT" type="mitigates" confidence="0.9">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><local id="RISK-API-DRIFT"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-NOGATE" type="mitigates" confidence="0.7">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><local id="OBS-NO-HARD-GATE"/></locator></to>
+    </edge>
+    <edge id="E-CI-NOGATE" type="mitigates" confidence="0.85">
+      <from><locator><local id="REQ-CI-PARITY"/></locator></from>
+      <to><locator><local id="OBS-NO-HARD-GATE"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-NOGATE" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="OBS-NO-HARD-GATE"/></locator></to>
+    </edge>
+    <edge id="E-ANCHOR-AGENTDRIFT" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><local id="OBS-AGENT-DRIFT"/></locator></to>
+    </edge>
+    <edge id="E-FAILOPEN-UNINSTALL" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
+      <to><locator><local id="OBS-UNINSTALL"/></locator></to>
+    </edge>
+    <edge id="E-DORMANT-LATENCY" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-DORMANT"/></locator></from>
+      <to><locator><local id="RISK-LATENCY"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-FALSEBLOCK" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="RISK-FALSE-BLOCK"/></locator></to>
+    </edge>
+    <edge id="E-CONTRACT-DRIFT" type="mitigates" confidence="0.9">
+      <from><locator><local id="REQ-CLI-CONTRACT"/></locator></from>
+      <to><locator><local id="RISK-CONTRACT-DRIFT"/></locator></to>
+    </edge>
+    <edge id="E-GUARD-CRAFTDRIFT" type="mitigates" confidence="0.8">
+      <from><locator><local id="REQ-CRAFT-GUARD"/></locator></from>
+      <to><locator><local id="RISK-CRAFT-DRIFT"/></locator></to>
+    </edge>
+    <edge id="E-APIRISK-OBSDRIFT" type="mitigates" confidence="0.85">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><local id="OBS-API-DRIFT"/></locator></to>
+    </edge>
+
+    <!-- Requirements verified by tests -->
+    <edge id="E-MANIFEST-TC" type="verifiedBy">
+      <from><locator><local id="REQ-MANIFEST"/></locator></from>
+      <to><locator><local id="TC-MANIFEST"/></locator></to>
+    </edge>
+    <edge id="E-FACTORY-TC" type="verifiedBy">
+      <from><locator><local id="REQ-PLUGIN-FACTORY"/></locator></from>
+      <to><locator><local id="TC-MANIFEST"/></locator></to>
+    </edge>
+    <edge id="E-ANCHOR-TC" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><local id="TC-ANCHOR"/></locator></to>
+    </edge>
+    <edge id="E-SPECEDIT-TC" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-SPEC-VALIDATE"/></locator></from>
+      <to><locator><local id="TC-SPEC-EDIT"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-TC-DENY" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="TC-PREIMPL-DENY"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-TC-FAILOPEN" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><local id="TC-PREIMPL-FAILOPEN"/></locator></to>
+    </edge>
+    <edge id="E-DISCLOSE-TC" type="verifiedBy">
+      <from><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></from>
+      <to><locator><local id="TC-SUBAGENT-GAP"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-TC-FLAG" type="verifiedBy">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><local id="TC-IDLE-ADVISORY"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-TC-QUIET" type="verifiedBy">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><local id="TC-IDLE-QUIET"/></locator></to>
+    </edge>
+    <edge id="E-HONEST-TC" type="verifiedBy">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><local id="TC-IDLE-ADVISORY"/></locator></to>
+    </edge>
+    <edge id="E-DORMANT-TC" type="verifiedBy">
+      <from><locator><local id="REQ-DORMANT"/></locator></from>
+      <to><locator><local id="TC-DORMANT"/></locator></to>
+    </edge>
+    <edge id="E-FAILOPEN-TC" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-FAIL-OPEN"/></locator></from>
+      <to><locator><local id="TC-FAIL-OPEN"/></locator></to>
+    </edge>
+    <edge id="E-THIN-TC" type="verifiedBy">
+      <from><locator><local id="REQ-THIN-ADAPTER"/></locator></from>
+      <to><locator><local id="TC-PARITY"/></locator></to>
+    </edge>
+    <edge id="E-CONFIGREG-TC" type="verifiedBy">
+      <from><locator><local id="REQ-CONFIG-HOOK-REGISTER"/></locator></from>
+      <to><locator><local id="TC-CONFIG-REGISTER"/></locator></to>
+    </edge>
+    <edge id="E-MCP-TC" type="verifiedBy">
+      <from><locator><local id="REQ-MCP-BUNDLED"/></locator></from>
+      <to><locator><local id="TC-CONFIG-REGISTER"/></locator></to>
+    </edge>
+    <edge id="E-APIRISK-TC" type="verifiedBy">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><local id="TC-API-ABSENT"/></locator></to>
+    </edge>
+    <edge id="E-WORKSPACE-TC" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-WORKSPACE"/></locator></from>
+      <to><locator><local id="TC-WORKSPACE"/></locator></to>
+    </edge>
+    <edge id="E-INSTALL-TC" type="verifiedBy">
+      <from><locator><local id="REQ-INSTALL-SMOKE"/></locator></from>
+      <to><locator><local id="TC-CONFIG-REGISTER"/></locator></to>
+    </edge>
+    <edge id="E-DOCS-TC" type="verifiedBy">
+      <from><locator><local id="REQ-DOCS-SURFACES"/></locator></from>
+      <to><locator><local id="TC-DOCS"/></locator></to>
+    </edge>
+
+    <!-- Conformance to the host platform and verified host facts -->
+    <edge id="E-MANIFEST-OPENCODE" type="conformsTo">
+      <from><locator><local id="REQ-MANIFEST"/></locator></from>
+      <to><locator><external uri="https://opencode.ai/docs/plugins/" kind="documentation" title="opencode plugin format"/></locator></to>
+    </edge>
+    <edge id="E-IDLE-NOSTOP" type="conformsTo">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><external uri="https://github.com/sst/opencode/issues/16626" kind="documentation" title="opencode has no session-stopping gate (feature request, unmerged)"/></locator></to>
+    </edge>
+    <edge id="E-DISCLOSE-5894" type="conformsTo">
+      <from><locator><local id="REQ-PREIMPL-COVERAGE-DISCLOSURE"/></locator></from>
+      <to><locator><external uri="https://github.com/sst/opencode/issues/5894" kind="documentation" title="tool.execute.before does not intercept subagent edits"/></locator></to>
+    </edge>
+
+    <!-- Behavior refines the plugin entity -->
+    <edge id="E-SM-PLUGIN" type="refines" confidence="0.9">
+      <from><locator><local id="SM-SESSION"/></locator></from>
+      <to><locator><local id="ENT-PLUGIN"/></locator></to>
+    </edge>
+
+    <!-- Cross-document dependencies on the upstream toolchain spec -->
+    <edge id="E-IDLE-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-TURN-END-CHECK"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-CLI-CHECK-GATE" title="rqml check gate"/></locator></to>
+    </edge>
+    <edge id="E-ANCHOR-UPSTREAM" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-CLI-COMMANDS" title="rqml core commands"/></locator></to>
+    </edge>
+    <edge id="E-PREIMPL-UPSTREAM" type="dependsOn" confidence="0.95">
+      <from><locator><local id="REQ-HOOK-PREIMPL"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-ENFORCE-PRIMITIVES" title="Enforcement primitives"/></locator></to>
+    </edge>
+    <edge id="E-CONTRACT-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-CLI-CONTRACT"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-CLI-EXIT-CODES" title="Stable exit codes"/></locator></to>
+    </edge>
+    <edge id="E-MCP-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-MCP-BUNDLED"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-MCP-TOOLS" title="MCP toolset"/></locator></to>
+    </edge>
+    <edge id="E-DESIGN-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-CMD-DESIGN"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-ADR-CONVENTION" title="Design decisions recorded as ADRs"/></locator></to>
+    </edge>
+    <edge id="E-PLAN-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-CMD-PLAN"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml/blob/main/requirements.rqml" docId="RQML-SELF-001" id="REQ-PLAN-CONVENTION" title="Implementation plan in .rqml/plan.md"/></locator></to>
+    </edge>
+    <edge id="E-DISCOVERY-UPSTREAM" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-DISCOVERY"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml-skill/blob/main/requirements.rqml" docId="RQML-SKILL-001" id="REQ-MONOREPO-REF" title="Canonical monorepo scope reference"/></locator></to>
+    </edge>
+    <edge id="E-CRAFT-UPSTREAM" type="dependsOn" confidence="1.0">
+      <from><locator><local id="REQ-SKILL-AUTHORING"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml-skill/blob/main/requirements.rqml" docId="RQML-SKILL-001" id="REQ-AUTHORING-CRAFT" title="Canonical authoring-craft reference"/></locator></to>
+    </edge>
+    <edge id="E-GUARD-UPSTREAM" type="dependsOn" confidence="0.9">
+      <from><locator><local id="REQ-CRAFT-GUARD"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml-skill/blob/main/requirements.rqml" docId="RQML-SKILL-001" id="REQ-CRAFT-SYNC" title="Automated craft propagation to plugins"/></locator></to>
+    </edge>
+
+    <!-- Sibling reuse: the anchor/validate/gate shape is inherited from the Codex adapter -->
+    <edge id="E-SIBLING-CODEX" type="dependsOn" confidence="0.7">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><doc uri="https://github.com/rqml-org/rqml-codex/blob/main/requirements.rqml" docId="RQML-CODEX-001" id="REQ-TRUST-TRANSPARENCY" title="Honest enforcement status"/></locator></to>
+    </edge>
+  </trace>
+
+  <!-- ============================================================= -->
+  <!-- GOVERNANCE                                                    -->
+  <!-- ============================================================= -->
+  <governance>
+    <issue id="ISS-IMPL-ZERO" status="review" owner="STK-MAINTAINER">
+      <statement>
+        Implementation coverage is zero by design at this draft: the spec
+        precedes the plugin. Every implements/verifiedBy edge to an artifact
+        will be recorded with rqml link as the corresponding piece lands, and
+        the drift baseline committed so the gate detects changed implementations
+        thereafter.
+      </statement>
+      <notes>Dogfood baseline, mirroring ISS-IMPL-ZERO in the sibling specs.</notes>
+    </issue>
+    <issue id="ISS-SIBLING-PARITY" status="review" owner="STK-MAINTAINER">
+      <statement>
+        This repository reuses the anchor/validate/gate shape proven in
+        RQML-CLAUDE-001 and RQML-CODEX-001 but adapts it to opencode's
+        capability inversion: the hard block moves from turn end to the edit
+        boundary, the turn-end check becomes advisory, and CI becomes the
+        authoritative gate. Open question: how much of the sibling craft
+        (commands, docs structure) can be shared verbatim versus host-specific.
+      </statement>
+    </issue>
+    <issue id="ISS-V2-PLUGIN-API" status="review" owner="STK-MAINTAINER">
+      <statement>
+        Open question: opencode ships a forthcoming v2 plugin API with
+        first-class agent, command, and skill registration modules distinct from
+        config-hook mutation. When it stabilizes, revisit DEC-COMMAND-SURFACES
+        and DEC-CONFIG-HOOK-REGISTER to prefer the supported registration path
+        over the semi-internal config hook.
+      </statement>
+    </issue>
+    <issue id="ISS-UPSTREAM-GATE" status="review" owner="STK-MAINTAINER">
+      <statement>
+        Open question: two opencode feature requests — sst/opencode #16626
+        (a session.stopping hook with output.stop=false) and #16879 (awaited
+        event.sync handlers) — would restore a hard turn-end gate. If either
+        merges, revisit DEC-SOFT-TURN-END to upgrade the advisory idle check to a
+        real block, while keeping the honest posture as the default.
+      </statement>
+    </issue>
+    <approval id="APR-MAINTAINER" role="RQML Maintainer" status="draft">
+      <description>Maintainer sign-off on the rqml-opencode specification.</description>
+    </approval>
+  </governance>
+
+</rqml>
