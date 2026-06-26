@@ -2227,6 +2227,70 @@
       <from><locator><local id="REQ-HOOK-WORKSPACE"/></locator></from>
       <to><locator><external uri="test/idle-check.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-COMMAND-SURFACES" type="implements">
+      <from><locator><external uri="src/commands/index.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-COMMAND-SURFACES"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-INIT" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-INIT"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-STATUS" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-STATUS"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-CHECK" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-CHECK"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-DESIGN" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-DESIGN"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-PLAN" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-PLAN"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-CMD-REVIEW" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-CMD-REVIEW"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-PATH-DISCIPLINE" type="implements">
+      <from><locator><external uri="src/commands/templates.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-PATH-DISCIPLINE"/></locator></to>
+    </edge>
+    <edge id="E-VER-COMMAND-SURFACES" type="verifiedBy">
+      <from><locator><local id="REQ-COMMAND-SURFACES"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-INIT" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-INIT"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-STATUS" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-STATUS"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-CHECK" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-CHECK"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-DESIGN" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-DESIGN"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-PLAN" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-PLAN"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-CMD-REVIEW" type="verifiedBy">
+      <from><locator><local id="REQ-CMD-REVIEW"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-PATH-DISCIPLINE" type="verifiedBy">
+      <from><locator><local id="REQ-PATH-DISCIPLINE"/></locator></from>
+      <to><locator><external uri="test/commands.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->

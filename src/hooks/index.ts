@@ -13,6 +13,7 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
 
 import { createWarnOnce, type Shell } from "../adapter/index.ts";
+import { toPluginTools } from "../commands/index.ts";
 import type { HookContext, PluginClient } from "./context.ts";
 import { createAnchor } from "./anchor.ts";
 import { createIdleCheck } from "./idle-check.ts";
@@ -39,5 +40,6 @@ export function createHooks(input: PluginInput): Hooks {
     "experimental.chat.system.transform": anchor.systemTransform,
     "chat.message": anchor.chatMessage,
     event: createIdleCheck(ctx),
+    tool: toPluginTools(),
   };
 }
