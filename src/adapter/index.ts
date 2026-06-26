@@ -14,3 +14,5 @@ export type { Strictness } from "./strictness.ts";
 
 export { createWarnOnce } from "./failopen.ts";
 export type { WarnOnce } from "./failopen.ts";
+
+export { guarded } from "./feature-detect.ts";

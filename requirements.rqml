@@ -2159,6 +2159,38 @@
       <from><locator><local id="REQ-HOOK-DIAGNOSTICS"/></locator></from>
       <to><locator><external uri="test/spec-validate.test.ts" kind="test"/></locator></to>
     </edge>
+    <edge id="E-IMPL-HOOK-ANCHOR" type="implements">
+      <from><locator><external uri="src/hooks/anchor.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-ANCHOR"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-HOOK-ANCHOR-2" type="implements">
+      <from><locator><external uri="src/content/anchor.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-HOOK-ANCHOR"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-ENFORCEMENT-HONESTY" type="implements">
+      <from><locator><external uri="src/content/anchor.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-EXPERIMENTAL-API-RISK" type="implements">
+      <from><locator><external uri="src/adapter/feature-detect.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></to>
+    </edge>
+    <edge id="E-IMPL-EXPERIMENTAL-API-RISK-2" type="implements">
+      <from><locator><external uri="src/hooks/anchor.ts" kind="code"/></locator></from>
+      <to><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></to>
+    </edge>
+    <edge id="E-VER-HOOK-ANCHOR" type="verifiedBy">
+      <from><locator><local id="REQ-HOOK-ANCHOR"/></locator></from>
+      <to><locator><external uri="test/anchor.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-ENFORCEMENT-HONESTY" type="verifiedBy">
+      <from><locator><local id="REQ-ENFORCEMENT-HONESTY"/></locator></from>
+      <to><locator><external uri="test/anchor.test.ts" kind="test"/></locator></to>
+    </edge>
+    <edge id="E-VER-EXPERIMENTAL-API-RISK" type="verifiedBy">
+      <from><locator><local id="REQ-EXPERIMENTAL-API-RISK"/></locator></from>
+      <to><locator><external uri="test/anchor.test.ts" kind="test"/></locator></to>
+    </edge>
   </trace>
 
   <!-- ============================================================= -->
