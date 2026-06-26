@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # REQ-CI-PARITY (GOAL-PARITY): the authoritative gate. Because opencode cannot
+  # block a turn from ending, CI is where rqml check is enforced on every change.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: npm install -g @rqml/cli
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+        env:
+          RQML_REQUIRE_CLI: "1"
+      - run: rqml check
+      - run: rqml check --strictness strict
+
+  # REQ-CRAFT-GUARD: PR-only, so main is not gated on the moving upstream craft.
+  craft-drift:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: npm run check:craft

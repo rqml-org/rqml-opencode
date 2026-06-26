@@ -1,0 +1,53 @@
+{
+  "name": "@rqml/opencode",
+  "version": "0.1.0",
+  "description": "Make opencode code from requirements, not guesswork: anchor every session on the spec, hard-gate edits to unapproved-requirement code at the tool boundary, and surface the deterministic rqml check verdict (CI authoritative).",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "files": [
+    "src",
+    "craft",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "check:craft": "node scripts/check-craft-drift.ts"
+  },
+  "keywords": [
+    "rqml",
+    "requirements",
+    "spec-first",
+    "traceability",
+    "drift",
+    "opencode",
+    "plugin"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Garðar Guðgeirsson",
+    "url": "https://github.com/gudgeirsson"
+  },
+  "homepage": "https://rqml.org",
+  "repository": "https://github.com/rqml-org/rqml-opencode",
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": ">=0.1.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
