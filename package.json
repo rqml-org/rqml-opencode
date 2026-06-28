@@ -10,13 +10,16 @@
   "files": [
     "src",
     "craft",
-    "README.md"
+    "docs",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
-    "check:craft": "node scripts/check-craft-drift.ts"
+    "check:craft": "node scripts/check-craft-drift.ts",
+    "prepublishOnly": "npm run typecheck"
   },
   "keywords": [
     "rqml",
@@ -34,6 +37,10 @@
   },
   "homepage": "https://rqml.org",
   "repository": "https://github.com/rqml-org/rqml-opencode",
+  "bugs": "https://github.com/rqml-org/rqml-opencode/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
